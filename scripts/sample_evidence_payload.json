@@ -1,0 +1,12 @@
+{
+  "case_id": "test-case-001",
+  "items": [
+    {
+      "id": "item-001",
+      "source": "sms",
+      "content": "This is a sample text message about parenting.",
+      "media_path": "/Users/mitchelwatson/Mitchopolis/parenting_evidence/inbox/example.txt",
+      "tags": ["sample", "test"]
+    }
+  ]
+}
