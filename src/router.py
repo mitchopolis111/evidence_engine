@@ -5,7 +5,6 @@ import uuid
 import logging
 from .classifier import classify_text
 from .ocr import safe_extract_text
-from .ocr import safe_extract_text
 
 router = APIRouter()
 
@@ -113,8 +112,19 @@ async def process_evidence(payload: ProcessEvidenceRequest):
 
     return ProcessEvidenceResponse(
         case_id=payload.case_id,
-
         timeline=timeline_entries,
         classified_count=len(payload.items),
     )
+
+
+@router.post("/ingest", response_model=ProcessEvidenceResponse)
+async def ingest_evidence(payload: ProcessEvidenceRequest):
+    """
+    Ingest evidence items, run OCR + classification + timeline building.
+
+    For v1, this simply forwards to the main process_evidence pipeline so we
+    don't duplicate logic. Later we can add extra ingestion-only behavior
+    (e.g., storage, hashing, queueing).
+    """
+    return await process_evidence(payload)
 # Note: Additional endpoints for /classify, /ocr, /timeline would go here in future versions.
