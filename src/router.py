@@ -1,3 +1,6 @@
+from pathlib import Path
+from fastapi.responses import FileResponse
+from .utils.zip_exporter import generate_evidence_zip
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -128,3 +131,21 @@ async def ingest_evidence(payload: ProcessEvidenceRequest):
     """
     return await process_evidence(payload)
 # Note: Additional endpoints for /classify, /ocr, /timeline would go here in future versions.
+
+@router.get("/export", summary="Export all evidence as a ZIP file")
+async def export_evidence() -> FileResponse:
+    """
+    Build a ZIP archive from the evidence folder and return it for download.
+    """
+    # Adjust the folder path if you want to export a different folder
+    evidence_folder = Path.home() / "Mitchopolis" / "parenting_evidence" / "text_logs"
+    try:
+        zip_path = generate_evidence_zip(evidence_folder)
+    except FileNotFoundError as e:
+        logger.error("Export failed: %s", e)
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception:
+        logger.exception("Unexpected error while generating export ZIP")
+        raise HTTPException(status_code=500, detail="Failed to generate export ZIP")
+
+    return FileResponse(str(zip_path), media_type="application/zip", filename=zip_path.name)
