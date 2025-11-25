@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 from fastapi.responses import FileResponse
 from .utils.zip_exporter import generate_evidence_zip
 from fastapi import APIRouter, HTTPException
@@ -133,12 +134,25 @@ async def ingest_evidence(payload: ProcessEvidenceRequest):
 # Note: Additional endpoints for /classify, /ocr, /timeline would go here in future versions.
 
 @router.get("/export", summary="Export all evidence as a ZIP file")
-async def export_evidence() -> FileResponse:
+async def export_evidence(folder: Optional[str] = None) -> FileResponse:
     """
     Build a ZIP archive from the evidence folder and return it for download.
+
+    Query params:
+    - `folder`: optional absolute path to the folder to export. If omitted,
+      tries environment variable `EVIDENCE_SOURCE_FOLDER`, then falls back to
+      the default `~/Mitchopolis/parenting_evidence/text_logs`.
     """
-    # Adjust the folder path if you want to export a different folder
-    evidence_folder = Path.home() / "Mitchopolis" / "parenting_evidence" / "text_logs"
+    # Determine source folder: query param -> env var -> hardcoded default
+    if folder:
+        evidence_folder = Path(folder).expanduser()
+    else:
+        env_folder = os.environ.get("EVIDENCE_SOURCE_FOLDER")
+        if env_folder:
+            evidence_folder = Path(env_folder).expanduser()
+        else:
+            evidence_folder = Path.home() / "Mitchopolis" / "parenting_evidence" / "text_logs"
+
     try:
         zip_path = generate_evidence_zip(evidence_folder)
     except FileNotFoundError as e:
