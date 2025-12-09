@@ -1,5 +1,20 @@
-venv/
+# Python cache
 __pycache__/
+*.pyc
+
+# pytest cache
+.pytest_cache/
+
+# VS Code settings backup
+.vscode/
+
+# Logs
+logs/
 *.log
-*.zip
-.DS_Store
+
+# Bundles, exports
+**/bundles/
+**/exports/
+
+# Virtual environment
+.venv/
