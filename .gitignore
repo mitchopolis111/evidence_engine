@@ -1,4 +1,57 @@
-venv/
+# Python cache
 __pycache__/
+*.pyc
+
+# pytest cache
+.pytest_cache/
+
+# VS Code settings backup
+.vscode/
+
+# Logs
+logs/
 *.log
-*.zip
+
+# Bundles, exports
+**/bundles/
+**/exports/
+# =========================
+# OS artifacts
+# =========================
+.DS_Store
+
+# =========================
+# Python cache
+# =========================
+__pycache__/
+*.pyc
+
+# =========================
+# Pytest cache
+# =========================
+.pytest_cache/
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Bundles / exports
+# =========================
+**/bundles/
+**/exports/
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+# Virtual environment
+.venv/
