@@ -36,3 +36,10 @@ def zip_folder(folder: Path) -> Path:
                 zipf.write(full_path, rel_path)
 
     return zip_path
+
+def generate_evidence_zip(folder: Path) -> Path:
+    """
+    Backward-compatibility wrapper expected by router and tests.
+    Delegates to the canonical zip_folder implementation.
+    """
+    return zip_folder(folder)
