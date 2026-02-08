@@ -115,6 +115,12 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated list of extensions to exclude",
     )
     parser.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        help="Exact filename to include (can be repeated)",
+    )
+    parser.add_argument(
         "--tag",
         action="append",
         default=[],
@@ -139,8 +145,16 @@ def main() -> int:
     exclude_ext = _normalize_ext_list(args.exclude_ext)
     files = _collect_files(folder, args.recursive, include_ext, exclude_ext)
 
+    file_filters = [f for f in args.file if f]
+    if file_filters:
+        allow = set(file_filters)
+        files = [f for f in files if f.name in allow]
+
     if not files:
-        print("No files found to ingest.")
+        if file_filters:
+            print("No files matched --file filter.")
+        else:
+            print("No files found to ingest.")
         return 1
 
     items = _build_items(files, args.source, args.tag)
