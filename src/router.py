@@ -12,6 +12,7 @@ from .ocr import safe_extract_text
 from .timeline import extract_date
 from .db import get_collection
 from datetime import datetime
+import hashlib
 from pymongo import UpdateOne
 
 router = APIRouter()
@@ -42,6 +43,7 @@ def _persist_timeline_entries(case_id: str, entries: List["TimelineEntry"]):
             "evidence_ids": entry.evidence_ids,
             "predicted_type": entry.predicted_type,
             "ocr_used": entry.ocr_used,
+            "evidence_hash": entry.evidence_hash,
         }
         ops.append(
             UpdateOne(
@@ -98,12 +100,28 @@ class TimelineEntry(BaseModel):
     evidence_ids: List[str] = Field(default_factory=list)
     predicted_type: Optional[str] = None
     ocr_used: bool = False
+    evidence_hash: Optional[str] = None
 
 
 class ProcessEvidenceResponse(BaseModel):
     case_id: str
     timeline: List[TimelineEntry]
     classified_count: int
+
+
+def _hash_file(path: str) -> Optional[str]:
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except (FileNotFoundError, PermissionError, OSError):
+        return None
+
+
+def _stable_timeline_id(case_id: str, evidence_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{case_id}:{evidence_id}"))
 
 
 @router.post("/process", response_model=ProcessEvidenceResponse)
@@ -131,8 +149,18 @@ async def process_evidence(payload: ProcessEvidenceRequest):
     timeline_entries: List[TimelineEntry] = []
 
     for item in payload.items:
-        evidence_id = item.id or str(uuid.uuid4())
-        timeline_id = str(uuid.uuid4())
+        evidence_hash = None
+        if item.media_path:
+            evidence_hash = _hash_file(item.media_path)
+
+        if item.id:
+            evidence_id = item.id
+        elif evidence_hash:
+            evidence_id = f"sha256:{evidence_hash}"
+        else:
+            evidence_id = str(uuid.uuid4())
+
+        timeline_id = _stable_timeline_id(payload.case_id, evidence_id)
 
         ocr_text = ""
         if item.media_path:
@@ -156,6 +184,7 @@ async def process_evidence(payload: ProcessEvidenceRequest):
                 evidence_ids=[evidence_id],
                 predicted_type=predicted_type,
                 ocr_used=bool(ocr_text.strip()),
+                evidence_hash=evidence_hash,
             )
         )
 
@@ -209,6 +238,7 @@ async def get_timeline(case_id: str):
                 evidence_ids=d.get("evidence_ids") or [],
                 predicted_type=d.get("predicted_type"),
                 ocr_used=bool(d.get("ocr_used")),
+                evidence_hash=d.get("evidence_hash"),
             )
         )
 

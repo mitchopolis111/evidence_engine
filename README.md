@@ -109,6 +109,7 @@ pytest tests/ -v
    - Classifies evidence type
    - Runs OCR on documents
    - Builds timeline entries
+   - File-based ingestion is idempotent (hash + upsert) to prevent duplicate entries
 4. **Exports** to `~/Mitchopolis/parenting_evidence/exports/`
 
 ---
