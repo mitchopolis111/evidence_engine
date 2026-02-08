@@ -9,10 +9,14 @@ import uuid
 import logging
 from .classifier import classify_text
 from .ocr import safe_extract_text
+from .timeline import extract_date
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
+# In-memory timeline cache keyed by case_id (dev-only; no persistence).
+CASE_TIMELINES: dict[str, List["TimelineEntry"]] = {}
 
 
 class EvidenceItem(BaseModel):
@@ -96,6 +100,7 @@ async def process_evidence(payload: ProcessEvidenceRequest):
 
         final_text = ocr_text.strip() if ocr_text.strip() else item.content.strip()
         predicted_type = classify_text(final_text)
+        timestamp = extract_date(final_text)
 
         # Simple v1 summary: truncate content
         summary = final_text
@@ -107,12 +112,14 @@ async def process_evidence(payload: ProcessEvidenceRequest):
                 id=timeline_id,
                 case_id=payload.case_id,
                 summary=summary,
-                timestamp=None,          # TODO: derive when we have real dates
+                timestamp=timestamp,
                 evidence_ids=[evidence_id],
                 predicted_type=predicted_type,
                 ocr_used=bool(ocr_text.strip()),
             )
         )
+
+    CASE_TIMELINES[payload.case_id] = timeline_entries
 
     return ProcessEvidenceResponse(
         case_id=payload.case_id,
@@ -131,7 +138,17 @@ async def ingest_evidence(payload: ProcessEvidenceRequest):
     (e.g., storage, hashing, queueing).
     """
     return await process_evidence(payload)
-# Note: Additional endpoints for /classify, /ocr, /timeline would go here in future versions.
+# Note: Additional endpoints for /classify, /ocr would go here in future versions.
+
+
+@router.get("/timeline/{case_id}", response_model=List[TimelineEntry])
+async def get_timeline(case_id: str):
+    """
+    Return timeline entries for a case_id from in-memory cache.
+    """
+    if case_id not in CASE_TIMELINES:
+        raise HTTPException(status_code=404, detail="Timeline not found for case_id")
+    return CASE_TIMELINES[case_id]
 
 @router.get("/export", summary="Export all evidence as a ZIP file")
 async def export_evidence(folder: Optional[str] = None) -> FileResponse:

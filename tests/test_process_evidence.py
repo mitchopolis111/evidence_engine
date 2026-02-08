@@ -72,3 +72,48 @@ def test_process_evidence_uses_ocr_when_available(monkeypatch):
     assert event["summary"] == "Extracted OCR text"
     assert event["ocr_used"] is True
     assert event["predicted_type"] == "UNSORTED"
+
+
+def test_process_evidence_extracts_timestamp_from_content():
+    payload = {
+        "case_id": "test-case-003",
+        "items": [
+            {
+                "id": "item-003",
+                "source": "sms",
+                "content": "Incident on 2025-11-20 at 5pm, please review.",
+                "media_path": None,
+                "tags": [],
+            }
+        ],
+    }
+
+    response = client.post("/api/evidence/process", json=payload)
+    assert response.status_code == 200
+
+    event = response.json()["timeline"][0]
+    assert event["timestamp"] == "2025-11-20"
+
+
+def test_get_timeline_by_case_id():
+    payload = {
+        "case_id": "test-case-004",
+        "items": [
+            {
+                "id": "item-004",
+                "source": "sms",
+                "content": "Timeline entry for 2025-11-21.",
+                "media_path": None,
+                "tags": [],
+            }
+        ],
+    }
+
+    post_res = client.post("/api/evidence/process", json=payload)
+    assert post_res.status_code == 200
+
+    get_res = client.get(f"/api/evidence/timeline/{payload['case_id']}")
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert isinstance(data, list)
+    assert data[0]["case_id"] == payload["case_id"]

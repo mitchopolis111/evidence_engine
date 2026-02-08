@@ -9,6 +9,11 @@ Python/FastAPI service responsible for:
 
 ---
 
+## Scope and Boundaries
+
+- This service handles OCR, classification, and timeline generation only.
+- Evidence storage, search, and legal API access live in `../legal_ai_engine/`.
+
 ## Local Development
 
 ### Prerequisites
@@ -76,14 +81,14 @@ evidence_engine/
 |--------|----------|---------|
 | `GET` | `/health` | Service health check |
 | `POST` | `/api/evidence/process` | Upload file, extract text (OCR), classify, and store timeline |
+| `POST` | `/api/evidence/ingest` | Ingest evidence (currently forwards to `/process`) |
+| `GET` | `/api/evidence/export` | Generate evidence export package |
+| `GET` | `/api/evidence/timeline/{case_id}` | Fetch timeline for a case (in-memory cache) |
 
 ### Planned
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `POST` | `/api/evidence/ingest` | Upload and classify evidence |
-| `GET` | `/api/evidence/timeline/{case_id}` | Fetch timeline for a case |
-| `POST` | `/api/evidence/export` | Generate evidence export package |
 
 ---
 
@@ -117,6 +122,13 @@ DATABASE_URL=mongodb+srv://...
 LOG_LEVEL=INFO
 EXPORT_PATH=~/Mitchopolis/parenting_evidence/exports
 ```
+
+---
+
+## Documentation
+
+- Procedures and operational rules: `../docs/README.md`
+- Architecture notes: `../docs/architecture/`
 
 ---
 
