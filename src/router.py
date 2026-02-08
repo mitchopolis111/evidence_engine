@@ -10,13 +10,53 @@ import logging
 from .classifier import classify_text
 from .ocr import safe_extract_text
 from .timeline import extract_date
+from .db import get_collection
+from datetime import datetime
+from pymongo import UpdateOne
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-# In-memory timeline cache keyed by case_id (dev-only; no persistence).
+# In-memory timeline cache keyed by case_id (dev-only fallback).
 CASE_TIMELINES: dict[str, List["TimelineEntry"]] = {}
+
+
+def _persist_timeline_entries(case_id: str, entries: List["TimelineEntry"]):
+    """
+    Persist timeline entries to MongoDB if configured. Falls back to memory when
+    Mongo is not available.
+    """
+    col = get_collection("timelines")
+    if col is None:
+        CASE_TIMELINES[case_id] = entries
+        return
+
+    ops = []
+    for entry in entries:
+        doc = {
+            "id": entry.id,
+            "case_id": entry.case_id,
+            "summary": entry.summary,
+            "timestamp": entry.timestamp,
+            "evidence_ids": entry.evidence_ids,
+            "predicted_type": entry.predicted_type,
+            "ocr_used": entry.ocr_used,
+        }
+        ops.append(
+            UpdateOne(
+                {"id": entry.id},
+                {"$set": doc, "$setOnInsert": {"created_at": datetime.utcnow()}},
+                upsert=True,
+            )
+        )
+
+    try:
+        if ops:
+            col.bulk_write(ops, ordered=False)
+    except Exception:
+        logger.exception("Failed to persist timeline entries to MongoDB")
+        raise HTTPException(status_code=500, detail="Failed to persist timeline")
 
 
 class EvidenceItem(BaseModel):
@@ -119,7 +159,7 @@ async def process_evidence(payload: ProcessEvidenceRequest):
             )
         )
 
-    CASE_TIMELINES[payload.case_id] = timeline_entries
+    _persist_timeline_entries(payload.case_id, timeline_entries)
 
     return ProcessEvidenceResponse(
         case_id=payload.case_id,
@@ -144,11 +184,35 @@ async def ingest_evidence(payload: ProcessEvidenceRequest):
 @router.get("/timeline/{case_id}", response_model=List[TimelineEntry])
 async def get_timeline(case_id: str):
     """
-    Return timeline entries for a case_id from in-memory cache.
+    Return timeline entries for a case_id from MongoDB (or in-memory fallback).
     """
-    if case_id not in CASE_TIMELINES:
+    col = get_collection("timelines")
+    if col is None:
+        if case_id not in CASE_TIMELINES:
+            raise HTTPException(status_code=404, detail="Timeline not found for case_id")
+        return CASE_TIMELINES[case_id]
+
+    docs = list(
+        col.find({"case_id": case_id}).sort([("timestamp", 1), ("created_at", 1)])
+    )
+    if not docs:
         raise HTTPException(status_code=404, detail="Timeline not found for case_id")
-    return CASE_TIMELINES[case_id]
+
+    entries: List[TimelineEntry] = []
+    for d in docs:
+        entries.append(
+            TimelineEntry(
+                id=str(d.get("id") or d.get("_id")),
+                case_id=d.get("case_id", case_id),
+                summary=d.get("summary", ""),
+                timestamp=d.get("timestamp"),
+                evidence_ids=d.get("evidence_ids") or [],
+                predicted_type=d.get("predicted_type"),
+                ocr_used=bool(d.get("ocr_used")),
+            )
+        )
+
+    return entries
 
 @router.get("/export", summary="Export all evidence as a ZIP file")
 async def export_evidence(folder: Optional[str] = None) -> FileResponse:

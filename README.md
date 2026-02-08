@@ -83,7 +83,7 @@ evidence_engine/
 | `POST` | `/api/evidence/process` | Upload file, extract text (OCR), classify, and store timeline |
 | `POST` | `/api/evidence/ingest` | Ingest evidence (currently forwards to `/process`) |
 | `GET` | `/api/evidence/export` | Generate evidence export package |
-| `GET` | `/api/evidence/timeline/{case_id}` | Fetch timeline for a case (in-memory cache) |
+| `GET` | `/api/evidence/timeline/{case_id}` | Fetch timeline for a case (MongoDB if configured; in-memory fallback) |
 
 ### Planned
 
@@ -119,6 +119,7 @@ Create a `.env` file in the `evidence_engine` root (not committed to Git):
 
 ```bash
 DATABASE_URL=mongodb+srv://...
+MONGO_URI=mongodb+srv://...
 LOG_LEVEL=INFO
 EXPORT_PATH=~/Mitchopolis/parenting_evidence/exports
 ```
