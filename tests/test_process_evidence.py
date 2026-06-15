@@ -16,7 +16,7 @@ def test_process_evidence_happy_path():
                 "id": "item-001",
                 "source": "sms",
                 "content": "This is a sample sms text message about parenting.",
-                "media_path": "/Users/mitchelwatson/Mitchopolis/parenting_evidence/inbox/example.txt",
+                "media_path": "/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/inbox/example.txt",
                 "tags": ["sample", "test"]
             }
         ]
@@ -117,3 +117,40 @@ def test_get_timeline_by_case_id():
     data = get_res.json()
     assert isinstance(data, list)
     assert data[0]["case_id"] == payload["case_id"]
+
+
+def test_process_evidence_uses_memory_fallback_when_mongo_unavailable(monkeypatch):
+    import src.router as router
+
+    class UnavailableCollection:
+        def bulk_write(self, ops, ordered=False):
+            raise RuntimeError("mongo unavailable")
+
+        def find(self, *args, **kwargs):
+            raise RuntimeError("mongo unavailable")
+
+    case_id = "test-case-mongo-fallback"
+    router.CASE_TIMELINES.pop(case_id, None)
+    monkeypatch.setattr(router, "get_collection", lambda name: UnavailableCollection())
+
+    payload = {
+        "case_id": case_id,
+        "items": [
+            {
+                "id": "item-mongo-fallback",
+                "source": "sms",
+                "content": "Timeline fallback entry for 2025-11-22.",
+                "media_path": None,
+                "tags": [],
+            }
+        ],
+    }
+
+    post_res = client.post("/api/evidence/process", json=payload)
+    assert post_res.status_code == 200
+
+    get_res = client.get(f"/api/evidence/timeline/{case_id}")
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert data[0]["case_id"] == case_id
+    assert data[0]["evidence_ids"] == ["item-mongo-fallback"]

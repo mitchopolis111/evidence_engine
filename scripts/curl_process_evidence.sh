@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-cd "$HOME/Mitchopolis/evidence_engine"
+cd "$(dirname "$0")/.."
 
 curl -X POST \
   http://127.0.0.1:8000/api/evidence/process \

@@ -5,15 +5,17 @@ set -e
 cd "$(dirname "$0")/.."
 
 # 1) Activate virtual environment
-if [ -f "venv/bin/activate" ]; then
+if [ -f ".venv/bin/activate" ]; then
+  source .venv/bin/activate
+elif [ -f "venv/bin/activate" ]; then
   source venv/bin/activate
 else
-  echo "venv not found. Run: python3 -m venv venv && pip install -r requirements.txt"
+  echo ".venv not found. Run: python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt"
   exit 1
 fi
 
 echo "[1/2] Running pytest..."
-pytest -vv
+python -m pytest -vv
 
 echo "[2/2] Running sample /api/evidence/process call (if API is up)..."
 

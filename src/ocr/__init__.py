@@ -12,7 +12,9 @@ This provides a "scanned-PDF fallback" without requiring extra libraries.
 
 from typing import Optional, Union, List
 from pathlib import Path
+from xml.etree import ElementTree
 import io
+import zipfile
 
 
 def safe_extract_text(
@@ -20,12 +22,14 @@ def safe_extract_text(
     *,
     max_pdf_pages: int = 25,
     ocr_dpi: int = 200,
+    enable_pdf_ocr: bool = True,
 ) -> str:
     """
     Best-effort extraction. Never raises: returns "" on failure.
 
     Supported:
     - .txt/.md/.log -> read text
+    - .docx -> read Word document XML text
     - images -> OCR via pytesseract
     - .pdf -> embedded text; OCR fallback for scanned pages
     """
@@ -49,6 +53,21 @@ def safe_extract_text(
     if ext in {".txt", ".md", ".log"}:
         try:
             return p.read_text(encoding="utf-8", errors="ignore").strip()
+        except Exception:
+            return ""
+
+    if ext == ".docx":
+        try:
+            with zipfile.ZipFile(p) as docx:
+                xml = docx.read("word/document.xml")
+            root = ElementTree.fromstring(xml)
+            namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            parts = [
+                node.text
+                for node in root.iter(f"{namespace}t")
+                if node.text
+            ]
+            return "\n".join(parts).strip()
         except Exception:
             return ""
 
@@ -117,6 +136,11 @@ def safe_extract_text(
                     continue
 
                 # 2) Scanned fallback (OCR)
+                if not enable_pdf_ocr:
+                    if txt:
+                        out_chunks.append(txt)
+                    continue
+
                 if not _ensure_ocr():
                     # Can't OCR; keep any partial embedded text
                     if txt:

@@ -15,7 +15,7 @@ def process_file(path: Path, case_id: str, router_callback):
     router_callback is just a placeholder for test mocks.
     Watcher never generates narrative, OCR, or timeline.
     """
-    dest_root = Path("~/Mitchopolis/cases").expanduser()
+    dest_root = Path(__file__).resolve().parents[3] / "cases"
     dest_dir = dest_root / case_id / "source_evidence"
     dest_dir.mkdir(parents=True, exist_ok=True)
 

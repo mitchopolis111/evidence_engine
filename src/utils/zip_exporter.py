@@ -3,7 +3,7 @@ import zipfile
 import os
 
 # Default root for exported ZIPs (tests will monkeypatch this)
-EXPORT_ROOT = Path("~/Mitchopolis/exports").expanduser()
+EXPORT_ROOT = Path(__file__).resolve().parents[3] / "exports"
 # Tests also expect TMP_DIR to exist as an attribute they can patch.
 TMP_DIR = EXPORT_ROOT / "tmp"
 

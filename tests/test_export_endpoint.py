@@ -8,6 +8,7 @@ from urllib.parse import quote
 from fastapi.testclient import TestClient
 
 from src.main import app
+from src.utils import zip_exporter
 
 
 def create_sample_files(root: Path):
@@ -18,6 +19,9 @@ def create_sample_files(root: Path):
 
 
 def test_export_endpoint_creates_zip(tmp_path, monkeypatch):
+    monkeypatch.setattr(zip_exporter, "EXPORT_ROOT", tmp_path / "exports")
+    monkeypatch.setattr(zip_exporter, "TMP_DIR", tmp_path / "exports" / "tmp")
+
     # Create a temporary source folder with sample files
     src_folder = tmp_path / "source"
     create_sample_files(src_folder)

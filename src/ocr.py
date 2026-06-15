@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+import zipfile
+from xml.etree import ElementTree
 
 
 def _truthy_env(name: str, default: str = "0") -> bool:
@@ -41,6 +43,22 @@ def safe_extract_text(path: str) -> str:
     if ext in {".txt", ".log"}:
         try:
             return p.read_text(encoding="utf-8", errors="ignore").strip()
+        except Exception:
+            return ""
+
+    # ---- WORD DOCUMENTS ----
+    if ext == ".docx":
+        try:
+            with zipfile.ZipFile(p) as docx:
+                xml = docx.read("word/document.xml")
+            root = ElementTree.fromstring(xml)
+            namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+            parts = [
+                node.text
+                for node in root.iter(f"{namespace}t")
+                if node.text
+            ]
+            return "\n".join(parts).strip()
         except Exception:
             return ""
 

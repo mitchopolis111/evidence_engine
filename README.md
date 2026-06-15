@@ -18,17 +18,16 @@ Python/FastAPI service responsible for:
 
 ### Prerequisites
 
-- Python 3.9+ (using local venv at `~/Mitchopolis/evidence_engine/venv`)
+- Python 3.9+ (using local venv at `/Users/mitchelwatson/Projects/Mitchopolis/evidence_engine/.venv`)
 - Uvicorn installed in the venv
 - Dependencies listed in `requirements.txt`
 
 ### Setup (One-Time)
 
 ```bash
-cd ~/Mitchopolis/evidence_engine
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+cd /Users/mitchelwatson/Projects/Mitchopolis/evidence_engine
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
 ### Starting the API (Dev Mode)
@@ -36,14 +35,13 @@ pip install -r requirements.txt
 From the `evidence_engine` folder:
 
 ```bash
-source venv/bin/activate
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+.venv/bin/python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Or from the Mitchopolis root:
 
 ```bash
-cd ~/Mitchopolis
+cd /Users/mitchelwatson/Projects/Mitchopolis
 ./run_evidence_api_dev.sh
 ```
 
@@ -57,7 +55,7 @@ The API will be available at `http://localhost:8000`.
 evidence_engine/
 ├── README.md
 ├── requirements.txt      # Python dependencies (currently minimal, to be expanded)
-├── venv/                 # Python virtual environment (local only, not in Git)
+├── .venv/                # Python virtual environment (local only, not in Git)
 ├── src/
 │   ├── __init__.py
 │   ├── main.py          # FastAPI app entry point
@@ -95,22 +93,32 @@ evidence_engine/
 ## Running Tests
 
 ```bash
-source venv/bin/activate
-pytest tests/ -v
+.venv/bin/python -m pytest -q
 ```
 
 ---
 
 ## Workflow: Daily Evidence Processing
 
-1. **Drop evidence** into `~/Mitchopolis/parenting_evidence/inbox/`
+Source-preserving case intake:
+
+```bash
+.venv/bin/python scripts/case_intake.py \
+  --case-id BCSC_138865_Watson_v_McClean \
+  --source-folder /path/to/legal-files
+```
+
+This creates a copied-file package, manifest, extracted text, timeline draft, proof-gap report, dashboard JSON, and ZIP under `/Users/mitchelwatson/Projects/Mitchopolis/output/`.
+Use `--ocr-text-dir /path/to/text --prefer-ocr-sidecar` when a corrected OCR sidecar should replace a weak embedded PDF text layer.
+
+1. **Drop evidence** into `/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/inbox/`
 2. **Watcher triggers** (LaunchAgent monitors folder)
 3. **Evidence Engine processes**:
    - Classifies evidence type
    - Runs OCR on documents
    - Builds timeline entries
    - File-based ingestion is idempotent (hash + upsert) to prevent duplicate entries
-4. **Exports** to `~/Mitchopolis/parenting_evidence/exports/`
+4. **Exports** to `/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/exports/`
 
 ---
 
@@ -122,7 +130,7 @@ Create a `.env` file in the `evidence_engine` root (not committed to Git):
 DATABASE_URL=mongodb+srv://...
 MONGO_URI=mongodb+srv://...
 LOG_LEVEL=INFO
-EXPORT_PATH=~/Mitchopolis/parenting_evidence/exports
+EXPORT_PATH=/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/exports
 ```
 
 ---
@@ -139,8 +147,8 @@ EXPORT_PATH=~/Mitchopolis/parenting_evidence/exports
 ### Module Not Found Errors
 Ensure venv is activated:
 ```bash
-source venv/bin/activate
-which python
+.venv/bin/python -V
+.venv/bin/python -m pytest -q
 ```
 
 ### Port Already in Use
@@ -153,8 +161,8 @@ kill -9 <PID>
 ### OCR Failures
 Check that tesseract and Pillow are installed:
 ```bash
-pip list | grep -i tesseract
-pip list | grep -i pillow
+.venv/bin/python -m pip list | grep -i tesseract
+.venv/bin/python -m pip list | grep -i pillow
 ```
 
 ---
@@ -169,7 +177,7 @@ pip list | grep -i pillow
 
 ## Contributing
 
-See `~/Mitchopolis/docs/best_practices_log_v1.md` for:
+See `/Users/mitchelwatson/Projects/Mitchopolis/docs/best_practices_log_v1.md` for:
 - Git standards & workflow
 - Commit message conventions
 - Multi-repo discipline rules

@@ -3,8 +3,8 @@ import os
 from fastapi.responses import FileResponse
 from .utils.zip_exporter import generate_evidence_zip
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, Dict, List, Optional
 import uuid
 import logging
 from .classifier import classify_text
@@ -13,7 +13,10 @@ from .timeline import extract_date
 from .db import get_collection
 from datetime import datetime
 import hashlib
-from pymongo import UpdateOne
+try:
+    from pymongo import UpdateOne
+except ImportError:
+    UpdateOne = None
 
 router = APIRouter()
 
@@ -29,7 +32,7 @@ def _persist_timeline_entries(case_id: str, entries: List["TimelineEntry"]):
     Mongo is not available.
     """
     col = get_collection("timelines")
-    if col is None:
+    if col is None or UpdateOne is None:
         CASE_TIMELINES[case_id] = entries
         return
 
@@ -44,6 +47,7 @@ def _persist_timeline_entries(case_id: str, entries: List["TimelineEntry"]):
             "predicted_type": entry.predicted_type,
             "ocr_used": entry.ocr_used,
             "evidence_hash": entry.evidence_hash,
+            "source_metadata": entry.source_metadata,
         }
         ops.append(
             UpdateOne(
@@ -56,9 +60,12 @@ def _persist_timeline_entries(case_id: str, entries: List["TimelineEntry"]):
     try:
         if ops:
             col.bulk_write(ops, ordered=False)
-    except Exception:
-        logger.exception("Failed to persist timeline entries to MongoDB")
-        raise HTTPException(status_code=500, detail="Failed to persist timeline")
+    except Exception as exc:
+        logger.warning(
+            "Failed to persist timeline entries to MongoDB; using in-memory fallback: %s",
+            type(exc).__name__,
+        )
+        CASE_TIMELINES[case_id] = entries
 
 
 class EvidenceItem(BaseModel):
@@ -82,6 +89,10 @@ class EvidenceItem(BaseModel):
         default_factory=list,
         description="Optional tags applied by the client",
     )
+    source_metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Structured provenance for the source record, if available",
+    )
 
 
 class ProcessEvidenceRequest(BaseModel):
@@ -101,12 +112,70 @@ class TimelineEntry(BaseModel):
     predicted_type: Optional[str] = None
     ocr_used: bool = False
     evidence_hash: Optional[str] = None
+    source_metadata: Optional[Dict[str, Any]] = None
 
 
 class ProcessEvidenceResponse(BaseModel):
     case_id: str
     timeline: List[TimelineEntry]
     classified_count: int
+
+
+class GmailAttachmentRecord(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    message_id: str = Field(..., description="Gmail message id containing the attachment")
+    thread_id: Optional[str] = Field(
+        default=None,
+        description="Gmail conversation thread id, when available",
+    )
+    thread_subject: Optional[str] = Field(
+        default=None,
+        description="Normalized Gmail conversation subject or thread key",
+    )
+    attachment_id: Optional[str] = Field(
+        default=None,
+        description="Gmail attachment id, when available",
+    )
+    filename: str = Field(..., description="Attachment filename")
+    media_path: Optional[str] = Field(
+        default=None,
+        description="Local path to the downloaded attachment",
+    )
+    mime_type: Optional[str] = None
+    size_bytes: Optional[int] = None
+    content: Optional[str] = Field(
+        default=None,
+        description="Optional extracted or descriptive text for the attachment",
+    )
+    email_ts: Optional[str] = Field(
+        default=None,
+        description="Timestamp from the source email",
+    )
+    from_: Optional[str] = Field(default=None, alias="from")
+    to: List[str] = Field(default_factory=list)
+    cc: List[str] = Field(default_factory=list)
+    subject: Optional[str] = None
+    snippet: Optional[str] = None
+    display_url: Optional[str] = None
+    labels: List[str] = Field(default_factory=list)
+    source_label: Optional[str] = Field(
+        default=None,
+        description="Human-readable Gmail label that produced this record",
+    )
+    law_firm: Optional[str] = Field(
+        default=None,
+        description="Law office associated with the Gmail label or sender",
+    )
+
+
+class GmailIntakeRequest(BaseModel):
+    case_id: str = Field(..., description="Case identifier in your system")
+    attachments: List[GmailAttachmentRecord] = Field(
+        ...,
+        description="Gmail attachments downloaded to local storage",
+    )
+    tags: List[str] = Field(default_factory=list)
 
 
 def _hash_file(path: str) -> Optional[str]:
@@ -185,6 +254,7 @@ async def process_evidence(payload: ProcessEvidenceRequest):
                 predicted_type=predicted_type,
                 ocr_used=bool(ocr_text.strip()),
                 evidence_hash=evidence_hash,
+                source_metadata=item.source_metadata,
             )
         )
 
@@ -207,6 +277,79 @@ async def ingest_evidence(payload: ProcessEvidenceRequest):
     (e.g., storage, hashing, queueing).
     """
     return await process_evidence(payload)
+
+
+@router.post("/gmail/intake", response_model=ProcessEvidenceResponse)
+async def ingest_gmail_attachments(payload: GmailIntakeRequest):
+    """
+    Import downloaded Gmail attachments through the same processing path used by
+    manual uploads and folder watchers while preserving email provenance.
+    """
+    if not payload.attachments:
+        raise HTTPException(status_code=400, detail="No Gmail attachments provided")
+
+    base_tags = [tag for tag in payload.tags if tag]
+    for required_tag in ("gmail",):
+        if required_tag not in base_tags:
+            base_tags.append(required_tag)
+
+    items: List[EvidenceItem] = []
+    for attachment in payload.attachments:
+        tags = list(base_tags)
+        for optional_tag in (attachment.law_firm, attachment.source_label):
+            if optional_tag and optional_tag not in tags:
+                tags.append(optional_tag)
+
+        source_metadata = {
+            "source": "gmail",
+            "thread_id": attachment.thread_id,
+            "thread_subject": attachment.thread_subject,
+            "message_id": attachment.message_id,
+            "email_ts": attachment.email_ts,
+            "from": attachment.from_,
+            "to": attachment.to,
+            "cc": attachment.cc,
+            "subject": attachment.subject,
+            "snippet": attachment.snippet,
+            "display_url": attachment.display_url,
+            "labels": attachment.labels,
+            "source_label": attachment.source_label,
+            "law_firm": attachment.law_firm,
+            "attachment": {
+                "attachment_id": attachment.attachment_id,
+                "filename": attachment.filename,
+                "mime_type": attachment.mime_type,
+                "size_bytes": attachment.size_bytes,
+            },
+        }
+        evidence_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                ":".join(
+                [
+                    payload.case_id,
+                    attachment.thread_id or "",
+                    attachment.thread_subject or "",
+                    attachment.message_id,
+                    attachment.attachment_id or attachment.filename,
+                ]
+            ),
+            )
+        )
+        items.append(
+            EvidenceItem(
+                id=evidence_id,
+                source="gmail",
+                content=attachment.content or f"Gmail attachment: {attachment.filename}",
+                media_path=attachment.media_path,
+                tags=tags,
+                source_metadata=source_metadata,
+            )
+        )
+
+    return await process_evidence(
+        ProcessEvidenceRequest(case_id=payload.case_id, items=items)
+    )
 # Note: Additional endpoints for /classify, /ocr would go here in future versions.
 
 
@@ -216,33 +359,42 @@ async def get_timeline(case_id: str):
     Return timeline entries for a case_id from MongoDB (or in-memory fallback).
     """
     col = get_collection("timelines")
-    if col is None:
-        if case_id not in CASE_TIMELINES:
-            raise HTTPException(status_code=404, detail="Timeline not found for case_id")
-        return CASE_TIMELINES[case_id]
+    if col is not None:
+        try:
+            docs = list(
+                col.find({"case_id": case_id}).sort(
+                    [("timestamp", 1), ("created_at", 1)]
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to read timeline entries from MongoDB; using in-memory fallback: %s",
+                type(exc).__name__,
+            )
+        else:
+            if docs:
+                entries: List[TimelineEntry] = []
+                for d in docs:
+                    entries.append(
+                        TimelineEntry(
+                            id=str(d.get("id") or d.get("_id")),
+                            case_id=d.get("case_id", case_id),
+                            summary=d.get("summary", ""),
+                            timestamp=d.get("timestamp"),
+                            evidence_ids=d.get("evidence_ids") or [],
+                            predicted_type=d.get("predicted_type"),
+                            ocr_used=bool(d.get("ocr_used")),
+                            evidence_hash=d.get("evidence_hash"),
+                            source_metadata=d.get("source_metadata"),
+                        )
+                    )
 
-    docs = list(
-        col.find({"case_id": case_id}).sort([("timestamp", 1), ("created_at", 1)])
-    )
-    if not docs:
+                return entries
+
+    if case_id not in CASE_TIMELINES:
         raise HTTPException(status_code=404, detail="Timeline not found for case_id")
 
-    entries: List[TimelineEntry] = []
-    for d in docs:
-        entries.append(
-            TimelineEntry(
-                id=str(d.get("id") or d.get("_id")),
-                case_id=d.get("case_id", case_id),
-                summary=d.get("summary", ""),
-                timestamp=d.get("timestamp"),
-                evidence_ids=d.get("evidence_ids") or [],
-                predicted_type=d.get("predicted_type"),
-                ocr_used=bool(d.get("ocr_used")),
-                evidence_hash=d.get("evidence_hash"),
-            )
-        )
-
-    return entries
+    return CASE_TIMELINES[case_id]
 
 @router.get("/export", summary="Export all evidence as a ZIP file")
 async def export_evidence(folder: Optional[str] = None) -> FileResponse:
@@ -252,7 +404,7 @@ async def export_evidence(folder: Optional[str] = None) -> FileResponse:
     Query params:
     - `folder`: optional absolute path to the folder to export. If omitted,
       tries environment variable `EVIDENCE_SOURCE_FOLDER`, then falls back to
-      the default `~/Mitchopolis/parenting_evidence/text_logs`.
+      the default `parenting_evidence/text_logs` under the Mitchopolis workspace.
     """
     # Determine source folder: query param -> env var -> hardcoded default
     if folder:
@@ -262,7 +414,8 @@ async def export_evidence(folder: Optional[str] = None) -> FileResponse:
         if env_folder:
             evidence_folder = Path(env_folder).expanduser()
         else:
-            evidence_folder = Path.home() / "Mitchopolis" / "parenting_evidence" / "text_logs"
+            workspace_root = Path(__file__).resolve().parents[2]
+            evidence_folder = workspace_root / "parenting_evidence" / "text_logs"
 
     try:
         zip_path = generate_evidence_zip(evidence_folder)

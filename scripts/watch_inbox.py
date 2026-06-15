@@ -11,6 +11,7 @@ from typing import Iterable, List, Optional, Set
 import httpx
 
 DEFAULT_ENDPOINT = "http://127.0.0.1:8000/api/evidence/process"
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _normalize_ext_list(value: str) -> Set[str]:
@@ -102,7 +103,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--case-id", required=True, help="Case identifier")
     parser.add_argument(
         "--inbox",
-        default="~/Mitchopolis/parenting_evidence/inbox",
+        default=str(WORKSPACE_ROOT / "parenting_evidence" / "inbox"),
         help="Inbox folder to watch",
     )
     parser.add_argument(
@@ -197,7 +198,7 @@ def main() -> int:
                     _safe_move(staged, failed_dir)
                     continue
 
-                case_dir = Path("~/Mitchopolis/cases").expanduser() / args.case_id / "source_evidence"
+                case_dir = WORKSPACE_ROOT / "cases" / args.case_id / "source_evidence"
                 final_path = _safe_move(staged, case_dir)
                 print(f"Ingested and moved to: {final_path}")
 
