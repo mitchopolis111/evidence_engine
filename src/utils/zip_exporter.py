@@ -10,7 +10,11 @@ def generate_evidence_zip(source_folder: Path) -> Path:
     if not folder_path.is_dir():
         raise NotADirectoryError(f"Source path is not a directory: {folder_path}")
 
-    zip_path = folder_path.with_suffix(".zip")
+    # ``with_suffix`` would replace the final part of a dotted directory name
+    # (for example, ``case.v1``), while ``make_archive`` appends ``.zip``.
+    # Build the return path the same way so callers always receive the archive
+    # that was actually created.
+    zip_path = Path(f"{folder_path}.zip")
     if zip_path.exists():
         zip_path.unlink()
 
