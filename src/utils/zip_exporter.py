@@ -1,6 +1,7 @@
 from pathlib import Path
 import zipfile
 import os
+import shutil
 
 # Default root for exported ZIPs (tests will monkeypatch this)
 EXPORT_ROOT = Path(__file__).resolve().parents[3] / "exports"
@@ -43,3 +44,21 @@ def generate_evidence_zip(folder: Path) -> Path:
     Delegates to the canonical zip_folder implementation.
     """
     return zip_folder(folder)
+
+
+def generate_court_bundle_zip(source_folder: Path) -> Path:
+    """Create a source-adjacent ZIP for a court bundle."""
+    folder_path = Path(source_folder).expanduser()
+    if not folder_path.exists():
+        raise FileNotFoundError(f"Source folder does not exist: {folder_path}")
+    if not folder_path.is_dir():
+        raise NotADirectoryError(f"Source path is not a directory: {folder_path}")
+
+    # Path.with_suffix() would turn ``case.v1`` into ``case.zip``. make_archive
+    # appends ``.zip``, so construct the cleanup path the same way.
+    zip_path = Path(f"{folder_path}.zip")
+    if zip_path.exists():
+        zip_path.unlink()
+
+    shutil.make_archive(str(folder_path), "zip", root_dir=folder_path)
+    return zip_path
