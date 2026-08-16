@@ -4,11 +4,12 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi.testclient import TestClient
 from src.main import app
+from src.ocr import TextExtractionResult
 
 
 client = TestClient(app)
 
-def test_process_evidence_happy_path():
+def test_process_evidence_happy_path(tmp_path):
     payload = {
         "case_id": "test-case-001",
         "items": [
@@ -16,7 +17,7 @@ def test_process_evidence_happy_path():
                 "id": "item-001",
                 "source": "sms",
                 "content": "This is a sample sms text message about parenting.",
-                "media_path": "/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/inbox/example.txt",
+                "media_path": str(tmp_path / "missing.txt"),
                 "tags": ["sample", "test"]
             }
         ]
@@ -35,6 +36,10 @@ def test_process_evidence_happy_path():
     assert event["evidence_ids"] == ["item-001"]
     assert event["timestamp"] is None
     assert event["predicted_type"] == "TEXTLOG"
+    assert event["extraction_method"] == "provided_content_fallback"
+    assert [warning["code"] for warning in event["processing_warnings"]] == [
+        "media_not_found"
+    ]
 
 def test_process_evidence_validation_error():
     bad_payload = {"items": []}
@@ -46,9 +51,12 @@ def test_process_evidence_uses_ocr_when_available(monkeypatch):
     import src.router as router
 
     def mock_ocr(path):
-        return "Extracted OCR text"
+        return TextExtractionResult(
+            text="Extracted OCR text",
+            method="image_ocr",
+        )
 
-    monkeypatch.setattr(router, "safe_extract_text", mock_ocr)
+    monkeypatch.setattr(router, "extract_text_with_diagnostics", mock_ocr)
 
     payload = {
         "case_id": "test-case-002",
@@ -71,7 +79,62 @@ def test_process_evidence_uses_ocr_when_available(monkeypatch):
 
     assert event["summary"] == "Extracted OCR text"
     assert event["ocr_used"] is True
+    assert event["extraction_method"] == "image_ocr"
+    assert event["processing_warnings"] == []
     assert event["predicted_type"] == "UNSORTED"
+
+
+def test_process_evidence_reports_unsupported_media_type(tmp_path):
+    source = tmp_path / "evidence.xyz"
+    source.write_text("not supported", encoding="utf-8")
+    payload = {
+        "case_id": "test-case-unsupported-media",
+        "items": [
+            {
+                "id": "item-unsupported-media",
+                "source": "file",
+                "content": "Fallback description",
+                "media_path": str(source),
+                "tags": [],
+            }
+        ],
+    }
+
+    response = client.post("/api/evidence/process", json=payload)
+
+    assert response.status_code == 200
+    event = response.json()["timeline"][0]
+    assert event["summary"] == "Fallback description"
+    assert event["extraction_method"] == "provided_content_fallback"
+    assert [warning["code"] for warning in event["processing_warnings"]] == [
+        "unsupported_media_type"
+    ]
+
+
+def test_process_evidence_reports_empty_media_extraction(tmp_path):
+    source = tmp_path / "empty.txt"
+    source.write_text("", encoding="utf-8")
+    payload = {
+        "case_id": "test-case-empty-extraction",
+        "items": [
+            {
+                "id": "item-empty-extraction",
+                "source": "file",
+                "content": "Fallback description",
+                "media_path": str(source),
+                "tags": [],
+            }
+        ],
+    }
+
+    response = client.post("/api/evidence/process", json=payload)
+
+    assert response.status_code == 200
+    event = response.json()["timeline"][0]
+    assert event["extraction_method"] == "provided_content_fallback"
+    assert [warning["code"] for warning in event["processing_warnings"]] == [
+        "no_text_extracted"
+    ]
 
 
 def test_process_evidence_extracts_timestamp_from_content():

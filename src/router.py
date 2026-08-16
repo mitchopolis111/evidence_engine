@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import uuid
 import logging
 from .classifier import classify_text
-from .ocr import safe_extract_text
+from .ocr import extract_text_with_diagnostics
 from .timeline import extract_date
 from .db import get_collection
 from datetime import datetime
@@ -138,6 +138,10 @@ def _persist_timeline_entries(case_id: str, entries: List["TimelineEntry"]):
             "evidence_ids": entry.evidence_ids,
             "predicted_type": entry.predicted_type,
             "ocr_used": entry.ocr_used,
+            "extraction_method": entry.extraction_method,
+            "processing_warnings": [
+                warning.model_dump() for warning in entry.processing_warnings
+            ],
             "evidence_hash": entry.evidence_hash,
             "source_metadata": entry.source_metadata,
         }
@@ -195,6 +199,11 @@ class ProcessEvidenceRequest(BaseModel):
     )
 
 
+class ProcessingWarning(BaseModel):
+    code: str
+    message: str
+
+
 class TimelineEntry(BaseModel):
     id: str
     case_id: str
@@ -203,6 +212,8 @@ class TimelineEntry(BaseModel):
     evidence_ids: List[str] = Field(default_factory=list)
     predicted_type: Optional[str] = None
     ocr_used: bool = False
+    extraction_method: str = "provided_content"
+    processing_warnings: List[ProcessingWarning] = Field(default_factory=list)
     evidence_hash: Optional[str] = None
     source_metadata: Optional[Dict[str, Any]] = None
 
@@ -288,17 +299,9 @@ def _stable_timeline_id(case_id: str, evidence_id: str) -> str:
 @router.post("/process", response_model=ProcessEvidenceResponse)
 async def process_evidence(payload: ProcessEvidenceRequest):
     """
-    v1 stub implementation.
-
-    Later this should:
-    - call classifier.py to classify evidence
-    - call ocr.py if items reference files
-    - call timeline.py to build proper timeline entries
-
-    For now it:
-    - validates input
-    - logs basic info
-    - returns a simple timeline built from the input items
+    Process evidence into source-linked timeline entries with extraction
+    diagnostics. Media extraction remains best-effort; supplied content is used
+    as a fallback and the reason is exposed in processing_warnings.
     """
     if not payload.items:
         raise HTTPException(status_code=400, detail="No evidence items provided")
@@ -323,11 +326,50 @@ async def process_evidence(payload: ProcessEvidenceRequest):
 
         timeline_id = _stable_timeline_id(payload.case_id, evidence_id)
 
-        ocr_text = ""
+        media_text = ""
+        processing_warnings: List[ProcessingWarning] = []
+        extraction_method = "provided_content"
         if item.media_path:
-            ocr_text = safe_extract_text(item.media_path) or ""
+            extraction = extract_text_with_diagnostics(item.media_path)
+            media_text = extraction.text
+            processing_warnings = [
+                ProcessingWarning(code=warning.code, message=warning.message)
+                for warning in extraction.warnings
+            ]
 
-        final_text = ocr_text.strip() if ocr_text.strip() else item.content.strip()
+        supplied_content = item.content.strip()
+        if media_text:
+            final_text = media_text
+            extraction_method = extraction.method
+        elif supplied_content:
+            final_text = supplied_content
+            if item.media_path:
+                extraction_method = "provided_content_fallback"
+        else:
+            final_text = ""
+            extraction_method = "none"
+            processing_warnings.append(
+                ProcessingWarning(
+                    code="no_usable_text",
+                    message="Neither media extraction nor supplied content produced usable text.",
+                )
+            )
+
+        if processing_warnings:
+            log_warning = (
+                logger.warning
+                if any(
+                    warning.code != "ocr_review_required"
+                    for warning in processing_warnings
+                )
+                else logger.info
+            )
+            log_warning(
+                "Evidence item %s processing warnings: %s",
+                evidence_id,
+                ",".join(warning.code for warning in processing_warnings),
+            )
+
         predicted_type = classify_text(final_text)
         timestamp = extract_date(final_text)
 
@@ -344,7 +386,9 @@ async def process_evidence(payload: ProcessEvidenceRequest):
                 timestamp=timestamp,
                 evidence_ids=[evidence_id],
                 predicted_type=predicted_type,
-                ocr_used=bool(ocr_text.strip()),
+                ocr_used=bool(media_text),
+                extraction_method=extraction_method,
+                processing_warnings=processing_warnings,
                 evidence_hash=evidence_hash,
                 source_metadata=item.source_metadata,
             )
@@ -476,6 +520,10 @@ async def get_timeline(case_id: str):
                             evidence_ids=d.get("evidence_ids") or [],
                             predicted_type=d.get("predicted_type"),
                             ocr_used=bool(d.get("ocr_used")),
+                            extraction_method=d.get(
+                                "extraction_method", "provided_content"
+                            ),
+                            processing_warnings=d.get("processing_warnings") or [],
                             evidence_hash=d.get("evidence_hash"),
                             source_metadata=d.get("source_metadata"),
                         )

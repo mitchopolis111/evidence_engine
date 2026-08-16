@@ -83,6 +83,11 @@ evidence_engine/
 | `GET` | `/api/evidence/export` | Export an approved evidence folder as a deterministic ZIP |
 | `GET` | `/api/evidence/timeline/{case_id}` | Fetch timeline for a case (MongoDB if configured; in-memory fallback) |
 
+Each processed timeline entry includes `extraction_method` and a structured
+`processing_warnings` list. Missing files, unsupported media, empty extraction,
+OCR availability, per-page OCR failures, and PDF page limits are reported
+without exposing exception text or silently claiming that media was read.
+
 ### Planned
 
 | Method | Endpoint | Purpose |

@@ -6,6 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from fastapi.testclient import TestClient
 
 from src.main import app
+from src.ocr import TextExtractionResult
 
 
 client = TestClient(app)
@@ -19,8 +20,11 @@ def test_gmail_intake_preserves_attachment_provenance(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         router,
-        "safe_extract_text",
-        lambda path: "Court File No.: 138865\nNOTICE OF WITHDRAWAL AS LAWYER",
+        "extract_text_with_diagnostics",
+        lambda path: TextExtractionResult(
+            text="Court File No.: 138865\nNOTICE OF WITHDRAWAL AS LAWYER",
+            method="pdf_text",
+        ),
     )
 
     payload = {
@@ -59,6 +63,8 @@ def test_gmail_intake_preserves_attachment_provenance(tmp_path, monkeypatch):
 
     event = data["timeline"][0]
     assert event["ocr_used"] is True
+    assert event["extraction_method"] == "pdf_text"
+    assert event["processing_warnings"] == []
     assert event["source_metadata"]["source"] == "gmail"
     assert event["source_metadata"]["thread_id"] == "thread-chandler-withdrawal"
     assert event["source_metadata"]["thread_subject"] == "McClean v. Watson - ET Client"
