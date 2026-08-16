@@ -1,7 +1,7 @@
 from pathlib import Path
 import os
 from fastapi.responses import FileResponse
-from .utils.zip_exporter import generate_evidence_zip
+from .utils.zip_exporter import UnsafeExportPathError, generate_evidence_zip
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Any, Dict, List, Optional
@@ -22,8 +22,100 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_EVIDENCE_ROOT = Path(__file__).resolve().parents[2] / "parenting_evidence"
+DEFAULT_EXPORT_SOURCE = DEFAULT_EVIDENCE_ROOT / "text_logs"
+
 # In-memory timeline cache keyed by case_id (dev-only fallback).
 CASE_TIMELINES: dict[str, List["TimelineEntry"]] = {}
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _configured_export_root(raw_path: str, variable_name: str) -> Path:
+    root = Path(raw_path).expanduser()
+    if not root.is_absolute():
+        logger.error("%s must contain an absolute path", variable_name)
+        raise HTTPException(
+            status_code=500,
+            detail="Export path configuration is invalid",
+        )
+
+    resolved_root = root.resolve(strict=False)
+    if resolved_root == Path(resolved_root.anchor):
+        logger.error("%s must not authorize the filesystem root", variable_name)
+        raise HTTPException(
+            status_code=500,
+            detail="Export path configuration is invalid",
+        )
+    return resolved_root
+
+
+def _approved_export_roots() -> List[Path]:
+    roots = [DEFAULT_EVIDENCE_ROOT.resolve(strict=False)]
+
+    source_folder = os.environ.get("EVIDENCE_SOURCE_FOLDER")
+    if source_folder:
+        roots.append(
+            _configured_export_root(source_folder, "EVIDENCE_SOURCE_FOLDER")
+        )
+
+    extra_roots = os.environ.get("EVIDENCE_EXPORT_ALLOWED_ROOTS", "")
+    for raw_root in extra_roots.split(os.pathsep):
+        if raw_root.strip():
+            roots.append(
+                _configured_export_root(
+                    raw_root.strip(), "EVIDENCE_EXPORT_ALLOWED_ROOTS"
+                )
+            )
+
+    return list(dict.fromkeys(roots))
+
+
+def _resolve_export_folder(folder: Optional[str]) -> Path:
+    configured_source = os.environ.get("EVIDENCE_SOURCE_FOLDER")
+    raw_folder = folder or configured_source or str(DEFAULT_EXPORT_SOURCE)
+    candidate = Path(raw_folder).expanduser()
+
+    if not candidate.is_absolute():
+        if folder:
+            raise HTTPException(
+                status_code=400,
+                detail="Export folder must be an absolute path",
+            )
+        logger.error("EVIDENCE_SOURCE_FOLDER must contain an absolute path")
+        raise HTTPException(
+            status_code=500,
+            detail="Export path configuration is invalid",
+        )
+
+    try:
+        resolved_folder = candidate.resolve(strict=False)
+    except (OSError, RuntimeError, ValueError):
+        raise HTTPException(status_code=400, detail="Export folder path is invalid")
+
+    if not any(
+        _is_within(resolved_folder, approved_root)
+        for approved_root in _approved_export_roots()
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Export folder is outside the approved evidence roots",
+        )
+    if not resolved_folder.exists():
+        raise HTTPException(status_code=404, detail="Export folder not found")
+    if not resolved_folder.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail="Export source must be a directory",
+        )
+
+    return resolved_folder
 
 
 def _persist_timeline_entries(case_id: str, entries: List["TimelineEntry"]):
@@ -402,26 +494,25 @@ async def export_evidence(folder: Optional[str] = None) -> FileResponse:
     Build a ZIP archive from the evidence folder and return it for download.
 
     Query params:
-    - `folder`: optional absolute path to the folder to export. If omitted,
-      tries environment variable `EVIDENCE_SOURCE_FOLDER`, then falls back to
-      the default `parenting_evidence/text_logs` under the Mitchopolis workspace.
+    - `folder`: optional absolute path under an approved evidence root. If
+      omitted, tries environment variable `EVIDENCE_SOURCE_FOLDER`, then falls
+      back to `parenting_evidence/text_logs` under the Mitchopolis workspace.
     """
-    # Determine source folder: query param -> env var -> hardcoded default
-    if folder:
-        evidence_folder = Path(folder).expanduser()
-    else:
-        env_folder = os.environ.get("EVIDENCE_SOURCE_FOLDER")
-        if env_folder:
-            evidence_folder = Path(env_folder).expanduser()
-        else:
-            workspace_root = Path(__file__).resolve().parents[2]
-            evidence_folder = workspace_root / "parenting_evidence" / "text_logs"
+    evidence_folder = _resolve_export_folder(folder)
 
     try:
         zip_path = generate_evidence_zip(evidence_folder)
-    except FileNotFoundError as e:
-        logger.error("Export failed: %s", e)
-        raise HTTPException(status_code=404, detail=str(e))
+    except FileNotFoundError:
+        logger.warning("Export source disappeared before packaging")
+        raise HTTPException(status_code=404, detail="Export folder not found")
+    except NotADirectoryError:
+        raise HTTPException(status_code=400, detail="Export source must be a directory")
+    except UnsafeExportPathError as exc:
+        logger.warning("Rejected unsafe export source: %s", exc)
+        raise HTTPException(
+            status_code=400,
+            detail="Export source contains unsafe filesystem entries",
+        )
     except Exception:
         logger.exception("Unexpected error while generating export ZIP")
         raise HTTPException(status_code=500, detail="Failed to generate export ZIP")

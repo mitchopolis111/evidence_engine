@@ -26,11 +26,13 @@ Expected local file:
 Typical variables:
 
 ```bash
-DATABASE_URL=...
 MONGO_URI=...
-LOG_LEVEL=INFO
-EXPORT_PATH=/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/exports
+EVIDENCE_SOURCE_FOLDER=/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/text_logs
+EVIDENCE_EXPORT_ALLOWED_ROOTS=/absolute/additional/evidence/root
 ```
+
+Use absolute paths. Separate multiple `EVIDENCE_EXPORT_ALLOWED_ROOTS` entries
+with `:` on macOS. Do not configure `/` or another broad system folder.
 
 ## 4. Run the API
 
@@ -151,7 +153,7 @@ tail -f /Users/mitchelwatson/Projects/Mitchopolis/evidence_engine/logs/watch_inb
 2. Drop files into `/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/inbox/`.
 3. Run batch ingest or start the watcher.
 4. Fetch timeline data from `GET /api/evidence/timeline/{case_id}`.
-5. Pull exports from `/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/exports/`.
+5. Pull generated ZIPs from `/Users/mitchelwatson/Projects/Mitchopolis/exports/`.
 
 ## 11. Common fixes
 

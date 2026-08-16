@@ -1,85 +1,78 @@
 # Export Endpoint Contract
 
-This document specifies the observed and intended contract for the Evidence Engine export endpoint.
-It captures purpose, inputs, outputs, side-effects, error behavior, and invariants.
-
-## Purpose
-
-Provide a way to export a filesystem folder as a ZIP archive. The endpoint returns the ZIP file contents
-and — as an implementation-side-effect — writes a copy of the archive under the configured `EXPORT_ROOT`.
+This document defines the Evidence Engine export endpoint, including its
+filesystem authorization boundary and ZIP invariants.
 
 ## Endpoint
 
-- Method: GET
+- Method: `GET`
 - Path: `/api/evidence/export`
-- Query parameter: `folder` (URL-encoded absolute or relative filesystem path)
+- Query parameter: `folder` (optional URL-encoded absolute path)
 
-Example request (URL-encoded):
+If `folder` is omitted, the endpoint uses `EVIDENCE_SOURCE_FOLDER`. If that is
+also unset, it uses the canonical `parenting_evidence/text_logs` folder.
 
-```
-GET /api/evidence/export?folder=/full/path/to/folder
-```
+Example:
 
-## Inputs
-
-- `folder` (required): filesystem path to the folder to be exported. The path is interpreted by the
-  server process (tilde expansion is performed by the exporter implementation).
-- Authentication/authorization: out of scope for this document (handled by higher-level middleware if present).
-
-Preconditions:
-- The path points to an existing directory readable by the server process.
-
-## Outputs
-
-On success the server returns a binary ZIP archive representing the contents of `folder`.
-
-- HTTP status: `200 OK`
-- Content-Type: `application/zip` (or a content-type that contains `zip`)
-- Body: raw ZIP bytes
-
-Side-effect (observed behavior):
-- The server also writes a file to `EXPORT_ROOT` named `{folder.name}_export.zip` (where `folder.name` is
-  the final path component of the input folder). The function returns the full path to this file internally.
-
-Returned ZIP contents:
-- The archive contains the files discovered under `folder` with archive names computed as relative
-  paths to `folder` (i.e., the ZIP entries preserve the folder-relative paths `a.txt`, `sub/b.txt`, ...).
-
-Invariants the implementation preserves:
-- Archive filename pattern: `<folder.name>_export.zip` under configured `EXPORT_ROOT`.
-- Archive entries are relative to the provided folder (no absolute paths inside the ZIP).
-
-## Error behavior (current observed)
-
-- If the provided `folder` does not exist the exporter raises `FileNotFoundError` and the endpoint returns an
-  internal error (500) as currently observed in tests/run. (Recommendation: translate this into a `404 Not Found`.)
-- Filesystem/permission errors are propagated from the underlying stdlib calls and surface as 5xx errors.
-
-## Recommended contract clarifications (optional)
-
-To stabilize the contract across clients and implementations, consider the following authoritative rules:
-
-- Successful responses MUST be `200` with `Content-Type: application/zip` and the raw ZIP bytes.
-- If the input folder does not exist, the server SHOULD return `404 Not Found` with a JSON error body.
-- If the server is unable to write the archive to `EXPORT_ROOT`, the server SHOULD return `503 Service Unavailable`
-  or `500 Internal Server Error` depending on transient vs permanent conditions.
-- The exporter MUST NOT include absolute paths in ZIP entries and MUST preserve relative structure rooted at the
-  provided `folder`.
-
-## Examples
-
-Observed success example (curl):
-
-```
-curl -G --output output.zip --data-urlencode "folder=/full/path/to/source" \
+```bash
+curl -G --output output.zip \
+  --data-urlencode "folder=/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/text_logs" \
   http://localhost:8000/api/evidence/export
 ```
 
-After this request the server will:
-- Write `EXPORT_ROOT/<source>_export.zip` on disk (implementation side-effect).
-- Return the ZIP bytes that can be saved locally (as in `output.zip`).
+## Approved source roots
 
-## Notes
+The resolved source path must be equal to or below one of these roots:
 
-- The behavior documented above reflects the current implementation's behavior and the tests used during stabilization.
-- This file is intended for documentation only and does not change runtime behavior.
+1. The canonical `parenting_evidence` folder beside the repository.
+2. `EVIDENCE_SOURCE_FOLDER`, when configured.
+3. Each absolute path in `EVIDENCE_EXPORT_ALLOWED_ROOTS`, separated by the
+   platform path separator (`:` on macOS).
+
+Configured roots must be absolute and cannot be the filesystem root. A request
+path is resolved before authorization, so `..` traversal and a requested
+symlink that escapes an approved root are rejected. Authentication of callers
+remains a deployment responsibility; the allowlist limits filesystem scope but
+does not replace API authentication.
+
+## Successful response
+
+- HTTP status: `200 OK`
+- Content-Type: `application/zip`
+- Body: raw ZIP bytes
+- Server-side output: `Mitchopolis/exports/<source-name>_export.zip`
+
+Archive entries use paths relative to the selected source folder. Absolute ZIP
+entry paths are never written. Files and directories are traversed in stable
+sorted order, and archive timestamps and file modes are normalized. The same
+filenames and file contents therefore produce the same ZIP bytes.
+
+The server writes to a temporary file and atomically replaces the named output
+after successful packaging, so a failed request does not leave a partial final
+archive.
+
+## Source restrictions
+
+Only regular files are packaged. A symbolic link or special filesystem entry
+anywhere in the source causes the request to fail rather than following or
+silently omitting that entry. The export destination must also remain outside
+the selected source folder.
+
+## Error responses
+
+| Status | Meaning |
+|---|---|
+| `400 Bad Request` | Relative path, non-directory source, invalid path, or unsafe source entry |
+| `403 Forbidden` | Resolved source is outside every approved evidence root |
+| `404 Not Found` | Approved source folder does not exist or disappears before packaging |
+| `500 Internal Server Error` | Invalid server configuration or unexpected archive failure |
+
+All errors use FastAPI's JSON error response shape with a concise `detail`
+message. Internal filesystem paths are not returned for unexpected failures.
+
+## Compatibility invariants
+
+- `folder` remains optional.
+- The archive name remains `<source-name>_export.zip`.
+- Nested source structure is preserved with relative POSIX-style entry names.
+- `generate_evidence_zip()` remains the router-facing compatibility function.

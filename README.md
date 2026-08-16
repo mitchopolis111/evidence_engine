@@ -80,7 +80,7 @@ evidence_engine/
 | `GET` | `/health` | Service health check |
 | `POST` | `/api/evidence/process` | Upload file, extract text (OCR), classify, and store timeline |
 | `POST` | `/api/evidence/ingest` | Ingest evidence (currently forwards to `/process`) |
-| `GET` | `/api/evidence/export` | Generate evidence export package |
+| `GET` | `/api/evidence/export` | Export an approved evidence folder as a deterministic ZIP |
 | `GET` | `/api/evidence/timeline/{case_id}` | Fetch timeline for a case (MongoDB if configured; in-memory fallback) |
 
 ### Planned
@@ -118,7 +118,7 @@ Use `--ocr-text-dir /path/to/text --prefer-ocr-sidecar` when a corrected OCR sid
    - Runs OCR on documents
    - Builds timeline entries
    - File-based ingestion is idempotent (hash + upsert) to prevent duplicate entries
-4. **Exports** to `/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/exports/`
+4. **Exports** to `/Users/mitchelwatson/Projects/Mitchopolis/exports/`
 
 ---
 
@@ -127,11 +127,21 @@ Use `--ocr-text-dir /path/to/text --prefer-ocr-sidecar` when a corrected OCR sid
 Create a `.env` file in the `evidence_engine` root (not committed to Git):
 
 ```bash
-DATABASE_URL=mongodb+srv://...
 MONGO_URI=mongodb+srv://...
-LOG_LEVEL=INFO
-EXPORT_PATH=/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/exports
+EVIDENCE_SOURCE_FOLDER=/Users/mitchelwatson/Projects/Mitchopolis/parenting_evidence/text_logs
+EVIDENCE_EXPORT_ALLOWED_ROOTS=/absolute/additional/evidence/root
 ```
+
+`EVIDENCE_SOURCE_FOLDER` is the default source when `/api/evidence/export` is
+called without a `folder` query parameter, and it is also treated as an approved
+export root. The canonical `parenting_evidence` folder is always approved.
+Additional absolute roots can be listed in `EVIDENCE_EXPORT_ALLOWED_ROOTS`,
+separated by the platform path separator (`:` on macOS).
+
+The export endpoint rejects relative paths, paths outside the approved roots,
+and sources containing symbolic links or special files. Generated archives are
+written under `/Users/mitchelwatson/Projects/Mitchopolis/exports/`. See
+`docs/export_contract.md` for status codes and examples.
 
 ---
 

@@ -32,6 +32,7 @@ def test_export_endpoint_creates_zip(tmp_path, monkeypatch):
     # Create a temporary source folder with sample files
     src_folder = tmp_path / "source"
     create_sample_files(src_folder)
+    monkeypatch.setenv("EVIDENCE_SOURCE_FOLDER", str(tmp_path))
 
     # Mock generate_evidence_zip to return in-memory zip content
     def mock_generate_zip(folder: Path) -> Path:
