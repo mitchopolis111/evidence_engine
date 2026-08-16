@@ -88,6 +88,11 @@ Each processed timeline entry includes `extraction_method` and a structured
 OCR availability, per-page OCR failures, and PDF page limits are reported
 without exposing exception text or silently claiming that media was read.
 
+Timeline dates are parsed by the single canonical `src.timeline` module. ISO
+dates, English month-name dates, and court-registry dates such as
+`16-NOV-2023` are normalized to `YYYY-MM-DD`. Invalid or absent dates remain
+unset; the service does not substitute the current date.
+
 ### Planned
 
 | Method | Endpoint | Purpose |
