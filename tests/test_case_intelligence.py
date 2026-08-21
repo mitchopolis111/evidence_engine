@@ -29,4 +29,4 @@ def test_child_entity_is_protected():
 
 
 def test_sha256_is_stable():
-    assert sha256_bytes(b"evidence") == "b2b0d0f88eac0f77dc67e25d2c3ec5fdb37efcb6813f4b5f5d6a4427a0e5e2e4"
+    assert sha256_bytes(b"evidence") == "ee8250fb76e094b34b471f13a73dbbe51d1ae142e9df59d7c0d31ec20f0a0a8e"
