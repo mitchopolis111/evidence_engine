@@ -10,12 +10,13 @@ def test_case_people_are_seeded():
     response = client.get("/api/v1/cases/BCSC-138865/people")
     assert response.status_code == 200
     people = response.json()
-    assert len(people) == 4
+    assert len(people) == 5
     names = {person["canonical_name"] for person in people}
     assert "Lindsay Alene McClean" in names
     assert "Clayton Miller" in names
     assert "Mitchel Watson" in names
     assert "Sofia Rae Watson" in names
+    assert "Laura Watson" in names
 
 
 def test_counsel_relationship_is_explicit():

@@ -91,8 +91,26 @@ evidence_engine/
 
 ```bash
 source venv/bin/activate
-pytest tests/ -v
+python -m pytest -q
 ```
+
+### Private OFW export acceptance
+
+The normal suite uses a synthetic, privacy-safe OFW fixture. To exercise the parser
+and idempotent import against the approved message export without committing it:
+
+```bash
+mkdir -p tests/fixtures/private
+ln -s /absolute/path/to/OFW_Messages_Report.pdf \
+  tests/fixtures/private/OFW_Messages_Report.pdf
+python -m pytest -q -m real_export tests/test_ofw_real_export.py
+```
+
+`tests/fixtures/private/` is gitignored. The pinned acceptance test covers the
+known native-text Message Report only; OFW call reports and companion attachment
+bytes require separate real fixtures before those paths can be considered validated.
+OFW does not expose message UUIDs in this PDF format, so cross-export IDs use a
+canonical content fingerprint and deliberately fail closed on an ambiguous duplicate.
 
 ---
 
@@ -113,7 +131,8 @@ pytest tests/ -v
 Create a `.env` file in the `evidence_engine` root (not committed to Git):
 
 ```bash
-DATABASE_URL=mongodb+srv://...
+MONGO_URI=mongodb+srv://...
+MONGO_DB_NAME=evidence_pipeline
 LOG_LEVEL=INFO
 EXPORT_PATH=~/Mitchopolis/parenting_evidence/exports
 ```

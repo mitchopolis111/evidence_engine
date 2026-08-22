@@ -55,3 +55,6 @@ logs/
 venv/
 # Virtual environment
 .venv/
+
+# Private source evidence used only for local acceptance tests
+tests/fixtures/private/
