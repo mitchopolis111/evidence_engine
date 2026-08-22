@@ -1,57 +1,31 @@
 # Python cache
 __pycache__/
 *.pyc
-
-# pytest cache
 .pytest_cache/
 
-# VS Code settings backup
-.vscode/
-
-# Logs
-logs/
-*.log
-
-# Bundles, exports
-**/bundles/
-**/exports/
-# =========================
-# OS artifacts
-# =========================
-.DS_Store
-
-# =========================
-# Python cache
-# =========================
-__pycache__/
-*.pyc
-
-# =========================
-# Pytest cache
-# =========================
-.pytest_cache/
-
-# =========================
-# VS Code
-# =========================
-.vscode/
-
-# =========================
-# Logs
-# =========================
-logs/
-*.log
-
-# =========================
-# Bundles / exports
-# =========================
-**/bundles/
-**/exports/
-
-# =========================
 # Virtual environments
-# =========================
 .venv/
 venv/
-# Virtual environment
-.venv/
+
+# Editor / OS artifacts
+.vscode/
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Secrets / local configuration
+.env
+.env.*
+!.env.example
+
+# Generated bundles / exports / temporary output
+dist/
+output/
+tmp/
+**/bundles/
+**/exports/
+
+# Generated build artifacts
+artifacts/build/
