@@ -21,11 +21,16 @@ class OneShotDuplicateCollection(FakeCollection):
         self.raised = False
 
     def bulk_write(self, operations, ordered=False):
-        result = super().bulk_write(operations, ordered=ordered)
         if not self.raised:
             self.raised = True
-            raise BulkWriteError({"writeErrors": [{"code": 11000}]})
-        return result
+            own = super().bulk_write(operations[:1], ordered=ordered)
+            # A competing writer inserts the second record before our upsert.
+            super().bulk_write(operations[1:], ordered=ordered)
+            raise BulkWriteError({
+                "writeErrors": [{"code": 11000, "index": 1}],
+                "nUpserted": own.upserted_count,
+            })
+        return super().bulk_write(operations, ordered=ordered)
 
 
 class ReceiptRaceCollection(FakeCollection):
@@ -192,7 +197,9 @@ def test_concurrent_identical_import_reconciles_duplicate_key_race():
     summary = import_ofw_messages(collection, parsed)
 
     assert collection.raised is True
-    assert summary.inserted_count == 0
+    assert summary.inserted_count == 1
+    assert summary.existing_count == 1
+    assert summary.occurrence_added_count == 1
     assert len(collection.documents) == 2
     assert all(
         len(document["source_occurrences"]) == 1
@@ -257,3 +264,33 @@ def test_import_rejects_an_existing_id_with_different_content():
 
     with pytest.raises(OFWImportConflict, match="different content"):
         import_ofw_messages(collection, parsed)
+
+
+def test_stale_pre_read_does_not_count_or_version_a_replayed_occurrence():
+    parsed = parsed_sample()
+
+    class CompetingImportCollection(FakeCollection):
+        injected = False
+
+        def bulk_write(self, operations, ordered=False):
+            if not self.injected:
+                self.injected = True
+                import_ofw_messages(self, parsed)
+            return super().bulk_write(operations, ordered=ordered)
+
+    collection = CompetingImportCollection()
+    summary = import_ofw_messages(collection, parsed)
+    assert (summary.inserted_count, summary.occurrence_added_count) == (0, 0)
+    assert all(document["occurrence_version"] == 1 for document in collection.documents.values())
+
+
+def test_duplicate_key_does_not_mask_write_concern_failure():
+    class UnacknowledgedCollection(FakeCollection):
+        def bulk_write(self, operations, ordered=False):
+            raise BulkWriteError({
+                "writeErrors": [{"code": 11000}],
+                "writeConcernErrors": [{"code": 64, "errmsg": "synthetic timeout"}],
+            })
+
+    with pytest.raises(BulkWriteError):
+        import_ofw_messages(UnacknowledgedCollection(), parsed_sample())

@@ -2,10 +2,11 @@ from copy import deepcopy
 
 
 class FakeWriteResult:
-    def __init__(self, upserted_id=None, upserted_count=0, matched_count=0):
+    def __init__(self, upserted_id=None, upserted_count=0, matched_count=0, modified_count=0):
         self.upserted_id = upserted_id
         self.upserted_count = upserted_count
         self.matched_count = matched_count
+        self.modified_count = modified_count
 
 
 class FakeCursor(list):
@@ -48,7 +49,7 @@ class FakeCollection:
         return FakeWriteResult(upserted_id=str(len(self.documents)))
 
     def find_one(self, query, projection=None):
-        document = self.documents.get(self._key(query))
+        document = next((d for d in self.documents.values() if self._matches(d, query)), None)
         return self._project(document, projection)
 
     def find(self, query, projection=None):
@@ -62,6 +63,7 @@ class FakeCollection:
     def bulk_write(self, operations, ordered=False):
         upserted_count = 0
         matched_count = 0
+        modified_count = 0
         for operation in operations:
             key = next(
                 (
@@ -80,10 +82,14 @@ class FakeCollection:
             elif key is not None:
                 matched_count += 1
             if key is not None:
+                previous = deepcopy(self.documents[key])
                 self._apply_update(self.documents[key], operation._doc, inserted)
+                if not inserted and previous != self.documents[key]:
+                    modified_count += 1
         return FakeWriteResult(
             upserted_count=upserted_count,
             matched_count=matched_count,
+            modified_count=modified_count,
         )
 
     @staticmethod
@@ -102,7 +108,18 @@ class FakeCollection:
     @staticmethod
     def _matches(document, query):
         for field, expected in query.items():
-            if isinstance(expected, dict) and "$in" in expected:
+            if isinstance(expected, dict) and "$ne" in expected:
+                values = [document]
+                for part in field.split("."):
+                    values = [
+                        child
+                        for item in values
+                        for value in ([item.get(part)] if isinstance(item, dict) else [])
+                        for child in (value if isinstance(value, list) else [value])
+                    ]
+                if expected["$ne"] in values:
+                    return False
+            elif isinstance(expected, dict) and "$in" in expected:
                 if document.get(field) not in expected["$in"]:
                     return False
             elif document.get(field) != expected:

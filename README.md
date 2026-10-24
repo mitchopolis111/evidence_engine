@@ -137,6 +137,40 @@ before those paths can be considered validated.
 OFW does not expose message UUIDs in this PDF format, so cross-export IDs use a
 canonical content fingerprint and deliberately fail closed on an ambiguous duplicate.
 
+### Disposable MongoDB acceptance
+
+Supply a local MongoDB Community server executable to run the real database tests:
+
+```bash
+python -m pytest -q --tb=short tests/test_ofw_mongodb.py \
+  --ofw-mongod="/absolute/path/to/mongod" \
+  --ofw-mongo-work-dir="/absolute/path/to/private-working-directory" \
+  --ofw-oct16-export="/absolute/path/to/private-copy/OFW_Messages_Report_2026-10-16_17-50-15.pdf"
+```
+
+The fixture starts its own server on a random loopback port with a new private
+data directory. It never reads application database configuration or connects to
+an existing MongoDB instance. Each test owns a uniquely named database; teardown
+stops the server and removes its disposable data and logs. Keep the working
+parent outside Git. Omitting `--ofw-mongod` skips these tests; an invalid explicit
+binary fails. Without the PDF, the synthetic database tests run and the private
+database acceptance test skips.
+
+Real database coverage includes unique-index enforcement, sequential replay,
+synchronized imports with 2 and 8 writers, conflicting content, separate source
+occurrences, and concurrent read-receipt reconciliation. The actual-report test
+runs eight identical imports, four additional source identities, and eight
+replays. MongoDB 8.0.34 was used for local validation.
+
+The importer now inserts a message and its first source occurrence atomically.
+Both insertion and later occurrence writes are guarded by the content hash;
+occurrence additions also require an absent occurrence key. Summary counts come
+from acknowledged database writes, including partial bulk successes. Interrupted
+imports can be retried idempotently; content conflicts are reported for review.
+Imports are not all-or-nothing transactions across an entire report: an interrupted
+or conflicting batch can leave successful individual records. Existing provenance
+is preserved rather than rewritten.
+
 ---
 
 ## Workflow: Daily Evidence Processing

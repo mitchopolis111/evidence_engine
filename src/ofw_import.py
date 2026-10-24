@@ -137,15 +137,18 @@ def _reconcile_read_receipts(collection, case_id: str, message_ids: list[str]) -
 
 
 def _is_duplicate_key_error(exc: BulkWriteError) -> bool:
-    write_errors = (exc.details or {}).get("writeErrors", [])
-    return bool(write_errors) and all(error.get("code") == 11000 for error in write_errors)
+    details = exc.details or {}
+    write_errors = details.get("writeErrors", [])
+    return (
+        bool(write_errors)
+        and not details.get("writeConcernErrors")
+        and all(error.get("code") == 11000 for error in write_errors)
+    )
 
 
 def import_ofw_messages(
     collection,
     parsed: OFWParseResult,
-    *,
-    _retry_on_duplicate: bool = True,
 ) -> OFWImportSummary:
     """Idempotently import one validated OFW message report into a Mongo collection."""
     messages = parsed.messages
@@ -192,8 +195,8 @@ def import_ofw_messages(
             for occurrence in existing.get("source_occurrences", [])
         }
 
-    operations = []
-    occurrence_added_count = 0
+    insert_operations = []
+    occurrence_operations = []
     for message in messages:
         occurrence = _source_occurrence(message)
         occurrence_key = occurrence["occurrence_key"]
@@ -201,32 +204,52 @@ def import_ofw_messages(
             message.message_id,
             set(),
         )
-        if occurrence_is_new:
-            occurrence_added_count += 1
         payload = message.model_dump(mode="python")
-        update = {"$setOnInsert": payload}
+        # Insert the first provenance record with the message, atomically.
+        payload["source_occurrences"] = [occurrence]
+        payload["occurrence_version"] = 1
+        content_key = {
+            "case_id": message.case_id,
+            "message_id": message.message_id,
+            "content_sha256": message.content_sha256,
+        }
+        insert_operations.append(UpdateOne(content_key, {"$setOnInsert": payload}, upsert=True))
         if occurrence_is_new:
-            update["$addToSet"] = {"source_occurrences": occurrence}
-            update["$inc"] = {"occurrence_version": 1}
-        operations.append(
-            UpdateOne(
-                {"case_id": message.case_id, "message_id": message.message_id},
-                update,
-                upsert=True,
+            # A stale pre-read must not increment the version or count a replay.
+            # The unique content guard also prevents attaching conflicting evidence.
+            occurrence_operations.append(
+                UpdateOne(
+                    {**content_key, "source_occurrences.occurrence_key": {"$ne": occurrence_key}},
+                    {
+                        "$addToSet": {"source_occurrences": occurrence},
+                        "$inc": {"occurrence_version": 1},
+                    },
+                )
             )
-        )
 
     try:
-        result = collection.bulk_write(operations, ordered=False)
+        result = collection.bulk_write(insert_operations, ordered=False)
+        inserted_count = result.upserted_count
     except BulkWriteError as exc:
-        if _retry_on_duplicate and _is_duplicate_key_error(exc):
-            return import_ofw_messages(
-                collection,
-                parsed,
-                _retry_on_duplicate=False,
-            )
-        raise
-    inserted_count = result.upserted_count
+        if not _is_duplicate_key_error(exc):
+            raise
+        # An unordered bulk can partially succeed. Keep its actual insert count;
+        # rerunning the whole import would lose those acknowledged writes.
+        inserted_count = exc.details.get("nUpserted", 0)
+        stored = list(collection.find(
+            {"case_id": case_id, "message_id": {"$in": list(message_by_id)}},
+            {"_id": 0, "message_id": 1, "content_sha256": 1},
+        ))
+        if len(stored) != len(message_by_id):
+            raise OFWImportConflict("concurrent import did not persist every message") from None
+        for document in stored:
+            if document.get("content_sha256") != message_by_id[document["message_id"]].content_sha256:
+                raise OFWImportConflict("message_id already exists with different content") from None
+
+    occurrence_added_count = inserted_count
+    if occurrence_operations:
+        added = collection.bulk_write(occurrence_operations, ordered=False)
+        occurrence_added_count += added.modified_count
     _reconcile_read_receipts(collection, case_id, list(message_by_id))
 
     return OFWImportSummary(
