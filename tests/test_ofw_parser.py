@@ -1,10 +1,11 @@
 from datetime import datetime
 
+import fitz
 import pytest
 from pydantic import ValidationError
 
 from src.case_intelligence import OFWMessage, SourceRef
-from src.ofw_parser import OFWParseError, parse_ofw_message_report_pages
+from src.ofw_parser import OFWParseError, parse_ofw_message_report, parse_ofw_message_report_pages
 from tests.ofw_sample import (
     SAMPLE_OFW_EDMONTON_PAGES,
     SAMPLE_OFW_PAGES,
@@ -124,3 +125,80 @@ def test_source_hash_is_normalized_to_lowercase():
     )
 
     assert source.sha256 == "a" * 64
+
+
+def test_native_extraction_does_not_claim_unmeasured_confidence():
+    parsed = parse_sample()
+
+    assert all(message.source.extraction_method == "native" for message in parsed.messages)
+    assert all(message.source.confidence is None for message in parsed.messages)
+
+
+def test_native_pdf_preserves_continuation_pages_and_excludes_quoted_threads():
+    # This public fixture exercises PDF extraction, not just pre-extracted text.
+    with fitz.open() as pdf:
+        first_page = pdf.new_page()
+        first_page.insert_text((24, 30), "\n".join([
+            "Message Report",
+            "Timezone: America/Vancouver",
+            "Date Range: 06/19/2024 - 01/30/2026",
+            "Contains: 2 selected messages",
+            "Order: Chronological (oldest first, most recent last)",
+        ]))
+        first_page.insert_text((24, 150), "Message 1 of 2")
+        for y, text in [
+            (180, "Sent: 06/19/2024 2:37 PM"),
+            (200, "From: Parent Alpha"),
+            (220, "To: Parent Beta (First Viewed: 06/20/2024 10:18 AM)"),
+            (240, "Subject: Testing"),
+            (280, "Body begins on page one."),
+        ]:
+            first_page.insert_text((52, y), text)
+        second_page = pdf.new_page()
+        second_page.insert_text((52, 30), "Body ends on page two.")
+        for y, text in [
+            (70, "Sent: 06/18/2024 1:00 PM"),
+            (90, "From: Parent Beta"),
+            (110, "To: Parent Alpha"),
+            (130, "Subject: Earlier message"),
+            (170, "Quoted content must not enter the primary body."),
+        ]:
+            second_page.insert_text((98, y), text)
+        second_page.insert_text((24, 220), "Message 2 of 2")
+        for y, text in [
+            (250, "Sent: 01/30/2026 3:25 PM"),
+            (270, "From: Parent Beta"),
+            (290, "To: Parent Alpha (First Viewed: Never)"),
+            (310, "Subject: Second message"),
+            (350, "The second body."),
+        ]:
+            second_page.insert_text((52, y), text)
+        data = pdf.tobytes()
+
+    parsed = parse_ofw_message_report(data, "synthetic-pdf", person_id_by_display_name=SAMPLE_PERSON_IDS)
+    first, second = parsed.messages
+    assert parsed.metadata.page_count == 2
+    assert (first.source.page, first.source.end_page) == (1, 2)
+    assert (second.source.page, second.source.end_page) == (2, 2)
+    assert " ".join(first.body.split()) == "Body begins on page one. Body ends on page two."
+    assert second.body == "The second body."
+    assert second.read_receipts[0].first_viewed_at_raw == "Never"
+    assert first.sent_at.isoformat() == "2024-06-19T14:37:00-07:00"
+    assert second.sent_at.isoformat() == "2026-01-30T15:25:00-08:00"
+
+
+def test_content_ids_survive_report_renumbering_and_repagination():
+    parsed = parse_sample()
+    # Simulate a smaller overlapping export without changing message content.
+    header = SAMPLE_OFW_PAGES[0].split("Message 1 of 2", 1)[0].replace(
+        "Contains: 2 selected messages", "Contains: 1 selected messages"
+    )
+    subset = parse_ofw_message_report_pages(
+        [header + SAMPLE_OFW_PAGES[1].replace("Message 2 of 2", "Message 1 of 1")],
+        document_id="overlapping-subset",
+        source_sha256="b" * 64,
+        person_id_by_display_name=SAMPLE_PERSON_IDS,
+    )
+    assert subset.messages[0].message_id == parsed.messages[1].message_id
+    assert subset.messages[0].source.page == 1
+    assert subset.messages[0].source.record_locator == "message:1/1"

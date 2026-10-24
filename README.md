@@ -106,9 +106,34 @@ ln -s /absolute/path/to/OFW_Messages_Report.pdf \
 python -m pytest -q -m real_export tests/test_ofw_real_export.py
 ```
 
-`tests/fixtures/private/` is gitignored. The pinned acceptance test covers the
-known native-text Message Report only; OFW call reports and companion attachment
-bytes require separate real fixtures before those paths can be considered validated.
+The test above is pinned to the July export (1,047 messages / 1,153 pages).
+It does not validate other exports when its private fixture is absent.
+
+For the October 16, 2026 export (622 messages / 643 pages), keep an isolated copy
+outside the repository and pass its path explicitly:
+
+```bash
+python -m pytest -q --tb=short tests/test_ofw_oct16_export.py \
+  --ofw-oct16-export="/absolute/path/to/private-copy/OFW_Messages_Report_2026-10-16_17-50-15.pdf"
+```
+
+Use the existing project Python environment. This test checks the PDF's pinned
+SHA-256 before parsing, declared counts and date range, every primary header,
+body, read receipt and attachment reference against an independent PDF layout
+reader, exact source-page ranges, stable content identifiers, import replay after
+a real BSON round trip, and preservation of separately acquired source references.
+Private-check failures expose only the exception type and code location, with
+evidence values and tracebacks withheld. The PDF, extracted text and message
+contents must never be committed. Native extraction leaves
+`source.confidence` null because no accuracy score has been measured.
+
+`tests/fixtures/private/` is gitignored. Both real-export tests skip when their
+private fixture is absent; a missing or incorrect **explicit** October path fails.
+A green CI run with skips is not real-export validation. The October tests use
+the real parser and importer with `FakeCollection` plus PyMongo's BSON codec;
+they do not establish live MongoDB index enforcement or concurrency behavior.
+OFW call reports and companion attachment bytes require separate real fixtures
+before those paths can be considered validated.
 OFW does not expose message UUIDs in this PDF format, so cross-export IDs use a
 canonical content fingerprint and deliberately fail closed on an ambiguous duplicate.
 

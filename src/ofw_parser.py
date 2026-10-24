@@ -269,7 +269,8 @@ def _parse_message_block(
             record_locator=f"message:{number}/{total}",
             source_type="ofw_message_report",
             extraction_method="native",
-            confidence=1.0,
+            # Native extraction is a method, not a measured accuracy score.
+            confidence=None,
         ),
     )
 
