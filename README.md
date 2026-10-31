@@ -91,8 +91,93 @@ evidence_engine/
 
 ```bash
 source venv/bin/activate
-pytest tests/ -v
+python -m pytest -q
 ```
+
+### Private OFW export acceptance
+
+The normal suite uses a synthetic, privacy-safe OFW fixture. To exercise the parser
+and idempotent import against the approved message export without committing it:
+
+```bash
+mkdir -p tests/fixtures/private
+ln -s /absolute/path/to/OFW_Messages_Report.pdf \
+  tests/fixtures/private/OFW_Messages_Report.pdf
+python -m pytest -q -m real_export tests/test_ofw_real_export.py
+```
+
+The test above is pinned to the July export (1,047 messages / 1,153 pages).
+It does not validate other exports when its private fixture is absent.
+
+For the October 16, 2026 export (622 messages / 643 pages), keep an isolated copy
+outside the repository and pass its path explicitly:
+
+```bash
+python -m pytest -q --tb=short tests/test_ofw_oct16_export.py \
+  --ofw-oct16-export="/absolute/path/to/private-copy/OFW_Messages_Report_2026-10-16_17-50-15.pdf"
+```
+
+Use the existing project Python environment. This test checks the PDF's pinned
+SHA-256 before parsing, declared counts and date range, every primary header,
+body, read receipt and attachment reference against an independent PDF layout
+reader, exact source-page ranges, stable content identifiers, import replay after
+a real BSON round trip, and preservation of separately acquired source references.
+Private-check failures expose only the exception type and code location, with
+evidence values and tracebacks withheld. The PDF, extracted text and message
+contents must never be committed. Native extraction leaves
+`source.confidence` null because no accuracy score has been measured.
+
+`tests/fixtures/private/` is gitignored. Both real-export tests skip when their
+private fixture is absent; a missing or incorrect **explicit** October path fails.
+A green CI run with skips is not real-export validation. The October tests use
+the real parser and importer with `FakeCollection` plus PyMongo's BSON codec;
+they do not establish live MongoDB index enforcement or concurrency behavior.
+OFW call reports and companion attachment bytes require separate real fixtures
+before those paths can be considered validated.
+OFW does not expose message UUIDs in this PDF format, so cross-export IDs use a
+canonical content fingerprint and deliberately fail closed on an ambiguous duplicate.
+
+### Disposable MongoDB acceptance
+
+For the October 30 compact report and cross-report overlap checks, see
+[the October 30 workflow](docs/ofw_oct30_acceptance.md). It requires an explicit
+display timezone because that PDF does not declare one. The workflow uses
+**identity version 2**, including layout-aware punctuation wrapping. It must use
+a fresh collection: existing version 1 records must be preserved and rebuilt from
+their original PDFs into a separate collection before any application cutover.
+The importer refuses to mix the two identity versions.
+
+Supply a local MongoDB Community server executable to run the real database tests:
+
+```bash
+python -m pytest -q --tb=short tests/test_ofw_mongodb.py \
+  --ofw-mongod="/absolute/path/to/mongod" \
+  --ofw-mongo-work-dir="/absolute/path/to/private-working-directory" \
+  --ofw-oct16-export="/absolute/path/to/private-copy/OFW_Messages_Report_2026-10-16_17-50-15.pdf"
+```
+
+The fixture starts its own server on a random loopback port with a new private
+data directory. It never reads application database configuration or connects to
+an existing MongoDB instance. Each test owns a uniquely named database; teardown
+stops the server and removes its disposable data and logs. Keep the working
+parent outside Git. Omitting `--ofw-mongod` skips these tests; an invalid explicit
+binary fails. Without the PDF, the synthetic database tests run and the private
+database acceptance test skips.
+
+Real database coverage includes unique-index enforcement, sequential replay,
+synchronized imports with 2 and 8 writers, conflicting content, separate source
+occurrences, and concurrent read-receipt reconciliation. The actual-report test
+runs eight identical imports, four additional source identities, and eight
+replays. MongoDB 8.0.34 was used for local validation.
+
+The importer now inserts a message and its first source occurrence atomically.
+Both insertion and later occurrence writes are guarded by the content hash;
+occurrence additions also require an absent occurrence key. Summary counts come
+from acknowledged database writes, including partial bulk successes. Interrupted
+imports can be retried idempotently; content conflicts are reported for review.
+Imports are not all-or-nothing transactions across an entire report: an interrupted
+or conflicting batch can leave successful individual records. Existing provenance
+is preserved rather than rewritten.
 
 ---
 
@@ -113,7 +198,8 @@ pytest tests/ -v
 Create a `.env` file in the `evidence_engine` root (not committed to Git):
 
 ```bash
-DATABASE_URL=mongodb+srv://...
+MONGO_URI=mongodb+srv://...
+MONGO_DB_NAME=evidence_pipeline
 LOG_LEVEL=INFO
 EXPORT_PATH=~/Mitchopolis/parenting_evidence/exports
 ```

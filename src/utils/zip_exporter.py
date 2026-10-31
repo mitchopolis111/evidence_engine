@@ -36,3 +36,8 @@ def zip_folder(folder: Path) -> Path:
                 zipf.write(full_path, rel_path)
 
     return zip_path
+
+
+def generate_evidence_zip(source_dir: Path) -> Path:
+    """Backward-compatible name for the canonical ZIP exporter."""
+    return zip_folder(source_dir)

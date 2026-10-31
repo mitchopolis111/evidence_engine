@@ -2,7 +2,7 @@ import io
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
