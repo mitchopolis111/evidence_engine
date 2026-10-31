@@ -21,11 +21,12 @@ def _pytest(*args):
     )
 
 
-def test_explicit_empty_private_export_path_fails_instead_of_skipping():
-    result = _pytest("tests/test_ofw_oct16_export.py", "--ofw-oct16-export=")
+@pytest.mark.parametrize("day", ["16", "30"])
+def test_explicit_empty_private_export_path_fails_instead_of_skipping(day):
+    result = _pytest(f"tests/test_ofw_oct{day}_export.py", f"--ofw-oct{day}-export=")
     assert result.returncode == 1
-    assert "explicit --ofw-oct16-export path" in result.stdout
-    assert "skipped" not in result.stdout
+    assert f"explicit --ofw-oct{day}-export path" in result.stdout
+    # Cross-report tests can skip when the other private report is absent.
 
 
 @pytest.mark.parametrize("failure", ["assertion", "exception", "fixture"])

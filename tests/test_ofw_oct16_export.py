@@ -16,7 +16,8 @@ from tests.ofw_pdf_oracle import assert_oct16_layout_matches
 from tests.ofw_private_checks import private_export_checks
 
 EXPORT_SHA256 = "302ab8efa015c357d3bab42104ba0dbc40d20b366d8f6837d4dfa2e9a9031830"
-ID_DIGEST = "ab1ae548423180e9e8c215b9c631ba94219f482641665cc5516a8351887402d8"
+# v2 explicitly changes identity; v1 collections must be rebuilt from sources.
+ID_DIGEST = "bd747b889ea84f436c2e7308e93f5ed5a745fee13d9b7fbb9835f11f0686b4c9"
 DEFAULT_EXPORT = Path("tests/fixtures/private/OFW_Messages_Report_2026-10-16_17-50-15.pdf")
 
 

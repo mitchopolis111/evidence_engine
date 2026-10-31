@@ -294,3 +294,17 @@ def test_duplicate_key_does_not_mask_write_concern_failure():
 
     with pytest.raises(BulkWriteError):
         import_ofw_messages(UnacknowledgedCollection(), parsed_sample())
+def test_import_refuses_legacy_identity_collection_without_mutating_it():
+    from copy import deepcopy
+    import pytest
+    from src.ofw_import import OFWImportConflict
+
+    parsed = parsed_sample()
+    collection = FakeCollection()
+    import_ofw_messages(collection, parsed)
+    for document in collection.documents.values():
+        document.pop("identity_version", None)
+    before = deepcopy(collection.documents)
+    with pytest.raises(OFWImportConflict, match="identity version"):
+        import_ofw_messages(collection, parsed)
+    assert collection.documents == before

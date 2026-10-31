@@ -139,6 +139,14 @@ canonical content fingerprint and deliberately fail closed on an ambiguous dupli
 
 ### Disposable MongoDB acceptance
 
+For the October 30 compact report and cross-report overlap checks, see
+[the October 30 workflow](docs/ofw_oct30_acceptance.md). It requires an explicit
+display timezone because that PDF does not declare one. The workflow uses
+**identity version 2**, including layout-aware punctuation wrapping. It must use
+a fresh collection: existing version 1 records must be preserved and rebuilt from
+their original PDFs into a separate collection before any application cutover.
+The importer refuses to mix the two identity versions.
+
 Supply a local MongoDB Community server executable to run the real database tests:
 
 ```bash

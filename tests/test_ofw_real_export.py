@@ -1,4 +1,3 @@
-import hashlib
 from pathlib import Path
 
 import pytest
@@ -25,12 +24,11 @@ def test_real_ofw_export_parser_and_import_acceptance():
     assert parsed.metadata.expected_message_count == 1047
     assert parsed.metadata.parsed_message_count == 1047
     assert len({message.message_id for message in parsed.messages}) == 1047
-    ordered_id_digest = hashlib.sha256(
-        "\n".join(message.message_id for message in parsed.messages).encode("utf-8")
-    ).hexdigest()
-    assert ordered_id_digest == (
-        "80562e69906bc29166a45eac31cb0021d08b50ec478ac694d514b44eb95868fa"
-    )
+    # The historical digest was for v1 IDs. No v2 digest is asserted until this
+    # unavailable private fixture is independently revalidated; do not invent one.
+    repeated = parse_ofw_message_report(PRIVATE_EXPORT.read_bytes(), document_id="second-copy")
+    assert all(message.identity_version == 2 for message in parsed.messages)
+    assert [m.message_id for m in parsed.messages] == [m.message_id for m in repeated.messages]
     assert parsed.messages[0].sent_at.isoformat() == "2024-06-19T14:37:00-07:00"
     assert parsed.messages[-1].sent_at.isoformat() == "2026-07-10T15:27:00-07:00"
     assert parsed.messages[3].source.page == 3

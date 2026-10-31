@@ -1,4 +1,6 @@
 def pytest_addoption(parser):
+    parser.addoption("--ofw-oct30-export", metavar="PDF", help="Private October 30 compact OFW PDF, outside Git")
+    parser.addoption("--ofw-oct30-timezone", metavar="ZONE", help="Explicit display timezone; compact PDF omits it")
     parser.addoption(
         "--ofw-oct16-export",
         metavar="PDF",

@@ -25,7 +25,10 @@ class OFWImportSummary(BaseModel):
 def _source_occurrence(message) -> dict:
     occurrence = {
         "source": message.source.model_dump(mode="python"),
+        "subject": message.subject,
+        "body": message.body,
         "source_timezone": message.source_timezone,
+        "source_timezone_basis": message.source_timezone_basis,
         "sent_at_raw": message.sent_at_raw,
         "read_receipts": [
             receipt.model_dump(mode="python") for receipt in message.read_receipts
@@ -37,7 +40,14 @@ def _source_occurrence(message) -> dict:
         "report_message_total": message.report_message_total,
     }
     occurrence["occurrence_key"] = _occurrence_key(occurrence)
+    occurrence["source_record_key"] = _source_record_key(occurrence)
     return occurrence
+
+
+def _source_record_key(occurrence: dict) -> str:
+    source = occurrence["source"]
+    locator = source.get("record_locator") or f"page:{source.get('page')}"
+    return f"{source['sha256']}:{source['source_type']}:{locator}"
 
 
 def _occurrence_key(occurrence: dict) -> str:
@@ -166,7 +176,30 @@ def import_ofw_messages(
         raise OFWImportConflict("one OFW import cannot span multiple cases")
     case_id = next(iter(case_ids))
 
+    if any(message.identity_version != 2 for message in messages):
+        raise OFWImportConflict("identity version 2 requires reparsing original reports")
+    if collection.find_one({"case_id": case_id, "identity_version": {"$ne": 2}}):
+        raise OFWImportConflict(
+            "legacy identity version present; reparse original reports into a fresh collection"
+        )
+
     ensure_unique_key_index(collection, OFW_MESSAGE_KEY_FIELDS)
+    # One physical PDF record cannot become two canonical messages, even when
+    # different callers supply conflicting timezones or acquisition IDs.
+    collection.create_index(
+        [("case_id", 1), ("source_occurrences.source_record_key", 1)],
+        unique=True, name="uq_case_source_record",
+        partialFilterExpression={"source_occurrences.source_record_key": {"$exists": True}},
+    )
+    source_ids = {_source_record_key(_source_occurrence(m)): m.message_id for m in messages}
+    for stored in collection.find(
+        {"case_id": case_id, "source_occurrences.source_record_key": {"$in": list(source_ids)}},
+        {"_id": 0, "message_id": 1, "source_occurrences": 1},
+    ):
+        for occurrence in stored.get("source_occurrences", []):
+            expected_id = source_ids.get(_source_record_key(occurrence))
+            if expected_id is not None and expected_id != stored["message_id"]:
+                raise OFWImportConflict("source record already has a different identity; verify timezone and rebuild")
     message_by_id = {message.message_id: message for message in messages}
     if len(message_by_id) != len(messages):
         raise OFWImportConflict("parsed report contains duplicate message IDs")

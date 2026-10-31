@@ -202,3 +202,46 @@ def test_content_ids_survive_report_renumbering_and_repagination():
     assert subset.messages[0].message_id == parsed.messages[1].message_id
     assert subset.messages[0].source.page == 1
     assert subset.messages[0].source.record_locator == "message:1/1"
+
+
+def test_content_identity_ignores_only_punctuation_split_at_pdf_line_breaks():
+    def parse_body(body):
+        pages = [p.replace("Current message only.", body) for p in SAMPLE_OFW_PAGES]
+        return parse_ofw_message_report_pages(
+            pages, "layout", "c" * 64, person_id_by_display_name=SAMPLE_PERSON_IDS,
+        ).messages[0]
+
+    unwrapped = parse_body("Don't change co-parenting at 2:45 or https://example.test/a/b.")
+    wrapped = parse_body("Don'\nt change co-\nparenting at 2:\n45 or https://example.test/a\n/b.")
+    deliberate_spaces = parse_body("Don' t change co- parenting at 2: 45 or https://example.test/a /b.")
+    assert wrapped.message_id == unwrapped.message_id
+    assert deliberate_spaces.message_id != unwrapped.message_id
+    assert wrapped.body != unwrapped.body  # Keep each extraction, with its PDF provenance.
+    assert wrapped.identity_version == 2
+    assert wrapped.message_id.startswith("ofw_v2_")
+
+
+def test_attachment_identity_ignores_punctuation_wrap_but_preserves_raw_name():
+    def parse_filename(name):
+        pages = [p.replace("example.pdf", name) for p in SAMPLE_OFW_PAGES]
+        return parse_ofw_message_report_pages(
+            pages, "layout", "d" * 64, person_id_by_display_name=SAMPLE_PERSON_IDS,
+        ).messages[1]
+    unwrapped = parse_filename("example_-__file.pdf")
+    wrapped = parse_filename("example_-\n__file.pdf")
+    assert wrapped.message_id == unwrapped.message_id
+    assert wrapped.attachments[0].raw_filename != unwrapped.attachments[0].raw_filename
+
+
+@pytest.mark.parametrize("ordinary,wrapped,joined", [
+    ("Pickup: Friday.", "Pickup:\nFriday.", "Pickup:Friday."),
+    ("Parents’ meeting.", "Parents’\nmeeting.", "Parents’meeting."),
+])
+def test_ordinary_punctuation_word_wrap_preserves_separators(ordinary, wrapped, joined):
+    def identity(body):
+        return parse_ofw_message_report_pages(
+            [p.replace("Current message only.", body) for p in SAMPLE_OFW_PAGES],
+            "ordinary-wrap", "e" * 64, person_id_by_display_name=SAMPLE_PERSON_IDS,
+        ).messages[0].message_id
+    assert identity(ordinary) == identity(wrapped)
+    assert identity(wrapped) != identity(joined)

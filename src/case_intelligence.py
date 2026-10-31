@@ -69,12 +69,14 @@ class OFWReadReceipt(BaseModel):
 
 class OFWMessage(BaseModel):
     message_id: str = Field(min_length=1)
+    identity_version: Literal[1, 2] = 1
     case_id: str = CASE_ID
     sender_person_id: str = Field(min_length=1)
     recipient_person_ids: list[str] = Field(min_length=1)
     sent_at: AwareDatetime
     sent_at_raw: str | None = None
     source_timezone: str | None = None
+    source_timezone_basis: Literal["report", "supplied"] = "report"
     read_at: AwareDatetime | None = None
     read_receipts: list[OFWReadReceipt] = Field(default_factory=list)
     subject: str | None = None

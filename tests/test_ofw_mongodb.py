@@ -7,6 +7,8 @@ from pymongo.errors import DuplicateKeyError
 
 from src.ofw_import import OFWImportConflict, _source_occurrence, import_ofw_messages
 from src.ofw_parser import parse_ofw_message_report_pages
+from src.ofw_parser import parse_ofw_message_report
+from tests.test_ofw_compact import compact_pdf
 from tests.ofw_mongo_server import isolated_mongo, mongo_collection  # noqa: F401
 from tests.ofw_private_checks import private_export_checks
 from tests.ofw_sample import SAMPLE_OFW_PAGES, SAMPLE_PERSON_IDS
@@ -14,6 +16,43 @@ from tests.test_ofw_import import parsed_sample
 from tests.test_ofw_oct16_export import oct16_export  # noqa: F401
 
 pytestmark = pytest.mark.mongodb
+
+
+def test_live_source_record_rejects_reinterpreted_timezone(mongo_collection):
+    data = compact_pdf()
+    reports = [parse_ofw_message_report(data, f"acquisition-{zone}", report_timezone=zone,
+                                       person_id_by_display_name=SAMPLE_PERSON_IDS)
+               for zone in ["America/Vancouver", "America/Edmonton"]]
+    import_ofw_messages(mongo_collection, reports[0])
+    before = list(mongo_collection.find({}))
+    with pytest.raises(OFWImportConflict, match="source record"):
+        import_ofw_messages(mongo_collection, reports[1])
+    assert list(mongo_collection.find({})) == before
+    index = mongo_collection.index_information()["uq_case_source_record"]
+    assert index["unique"]
+
+
+def test_concurrent_conflicting_timezone_cannot_duplicate_source_record(mongo_collection):
+    data = compact_pdf()
+    reports = [parse_ofw_message_report(data, f"acquisition-{zone}", report_timezone=zone,
+                                       person_id_by_display_name=SAMPLE_PERSON_IDS)
+               for zone in ["America/Vancouver", "America/Edmonton"]]
+    for report in reports:
+        report.messages = report.messages[:1]
+    barrier = Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(import_ofw_messages, SynchronizedReadCollection(mongo_collection, barrier), report)
+                   for report in reports]
+        outcomes = []
+        for future in futures:
+            try:
+                outcomes.append(future.result(timeout=45))
+            except OFWImportConflict:
+                outcomes.append("conflict")
+    assert outcomes.count("conflict") == 1
+    assert mongo_collection.count_documents({}) == 1
+    stored = mongo_collection.find_one({})
+    assert len(stored["source_occurrences"]) == stored["occurrence_version"] == 1
 
 
 class SynchronizedReadCollection:

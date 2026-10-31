@@ -4,6 +4,7 @@ import bisect
 import hashlib
 import re
 from datetime import date, datetime, timezone as datetime_timezone
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import fitz
@@ -52,6 +53,8 @@ class OFWReportMetadata(BaseModel):
     date_range_end: date
     order: str
     generated_at_raw: str | None = None
+    timezone_basis: Literal["report", "supplied"] = "report"
+    date_range_basis: Literal["report", "messages"] = "report"
 
     @field_validator("sha256")
     @classmethod
@@ -69,6 +72,8 @@ def parse_ofw_message_report(
     document_id: str,
     case_id: str = CASE_ID,
     person_id_by_display_name: dict[str, str] | None = None,
+    *,
+    report_timezone: str | None = None,
 ) -> OFWParseResult:
     if not data:
         raise OFWParseError("OFW report is empty")
@@ -78,10 +83,21 @@ def parse_ofw_message_report(
             if report.page_count < 1:
                 raise OFWParseError("OFW report has no pages")
             pages = [page.get_text("text", sort=True) for page in report]
+            if re.search(r"(?m)^\s*SENT\s+\d{2}/\d{2}/\d{4}.*\bFROM\b", pages[0]):
+                from .ofw_compact import parse_compact_report
+
+                return parse_compact_report(
+                    report, data, document_id, case_id, person_id_by_display_name, report_timezone,
+                )
     except OFWParseError:
         raise
     except Exception as exc:
         raise OFWParseError("unable to read OFW PDF") from exc
+
+    if report_timezone is not None:
+        declared = _extract_required_metadata(pages[0], "Timezone", r"[A-Za-z_+-]+/[A-Za-z_+-]+")
+        if report_timezone != declared:
+            raise OFWParseError("supplied timezone conflicts with report timezone")
 
     return parse_ofw_message_report_pages(
         pages=pages,
@@ -223,7 +239,11 @@ def _parse_message_block(
     lines = block.replace("\r\n", "\n").replace("\r", "\n").splitlines()
     fields, body_start = _parse_first_header(lines, number)
     nested_header_start = _find_nested_header(lines, body_start)
-    body, attachments = _parse_body(lines[body_start:nested_header_start])
+    body_lines = lines[body_start:nested_header_start]
+    body, attachments = _parse_body(body_lines)
+    # Fingerprint layout-normalized text, but retain the original extraction in
+    # the message/occurrence and leave the source PDF untouched.
+    identity_body, identity_attachments = _parse_body(_identity_lines(body_lines))
 
     sent_at_raw = _normalize_datetime_text(fields["sent"])
     sent_at = _parse_local_datetime(sent_at_raw, timezone)
@@ -241,12 +261,13 @@ def _parse_message_block(
         sender_person_id=sender_person_id,
         recipient_person_ids=recipients,
         subject=subject,
-        body=body,
-        attachments=attachments,
+        body=identity_body,
+        attachments=identity_attachments,
     )
 
     return OFWMessage(
-        message_id=f"ofw_{content_sha256[:32]}",
+        message_id=f"ofw_v2_{content_sha256[:32]}",
+        identity_version=2,
         case_id=case_id,
         sender_person_id=sender_person_id,
         recipient_person_ids=recipients,
@@ -385,6 +406,34 @@ def _parse_body(lines: list[str]) -> tuple[str, list[OFWAttachment]]:
             )
         )
     return body, attachments
+
+
+def _identity_lines(lines: list[str]) -> list[str]:
+    """Undo punctuation wrapping only at actual PDF line boundaries.
+
+    Do not remove spaces within a line or across paragraphs. This is deliberately
+    narrower than removing punctuation-adjacent whitespace from stored messages.
+    Version 1 lost line boundaries and cannot be safely migrated from DB text.
+    """
+    normalized = []
+    for line in lines:
+        line = line.strip()
+        previous = normalized[-1] if normalized else ""
+        contraction = (re.search(r"[A-Za-z][’']$", previous)
+                       and re.match(r"(?:s|t|re|ve|ll|d|m)\b", line, re.IGNORECASE))
+        clock_time = re.search(r"\d:$", previous) and re.match(r"\d", line)
+        hyphenated = re.search(r"\w[-_]$", previous) and re.match(r"\w", line)
+        url = (re.search(r"https?://\S+$", previous)
+               and (previous.endswith("/") or line.startswith("/")))
+        # OFW permits wrapping before slash-separated words. Restrict the
+        # non-URL case to conventional alternatives, not arbitrary prose.
+        alternatives = (re.search(r"\b(?:and|or|she|he|we|they|you|I|me|him|her|us)$", previous)
+                        and re.match(r"/(?:and|or|she|he|we|they|you|I|me|him|her|us)\b", line))
+        if previous and line and (contraction or clock_time or hyphenated or url or alternatives):
+            normalized[-1] += line
+        else:
+            normalized.append(line)
+    return normalized
 
 
 def _parse_recipients(

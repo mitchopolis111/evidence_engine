@@ -108,21 +108,21 @@ class FakeCollection:
     @staticmethod
     def _matches(document, query):
         for field, expected in query.items():
+            values = [document]
+            for part in field.split("."):
+                values = [
+                    child
+                    for item in values
+                    for value in ([item.get(part)] if isinstance(item, dict) else [])
+                    for child in (value if isinstance(value, list) else [value])
+                ]
             if isinstance(expected, dict) and "$ne" in expected:
-                values = [document]
-                for part in field.split("."):
-                    values = [
-                        child
-                        for item in values
-                        for value in ([item.get(part)] if isinstance(item, dict) else [])
-                        for child in (value if isinstance(value, list) else [value])
-                    ]
                 if expected["$ne"] in values:
                     return False
             elif isinstance(expected, dict) and "$in" in expected:
-                if document.get(field) not in expected["$in"]:
+                if not any(value in expected["$in"] for value in values):
                     return False
-            elif document.get(field) != expected:
+            elif expected not in values:
                 return False
         return True
 
